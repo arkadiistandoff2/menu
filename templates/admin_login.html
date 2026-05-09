@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <title>Вхід - Адмін</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;900&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gray-900 h-screen flex items-center justify-center font-['Nunito']">
+    <div class="bg-gray-800 p-8 rounded-3xl shadow-2xl w-96 max-w-full text-center">
+        <h1 class="text-4xl font-black text-orange-500 mb-6 tracking-tighter">ппп</h1>
+        <h2 class="text-white text-xl font-bold mb-6">Вхід в адмін-панель</h2>
+        
+        {% if error %}
+        <p class="text-red-500 font-bold mb-4 bg-red-100/10 py-2 rounded-lg">{{ error }}</p>
+        {% endif %}
+        
+        <form method="POST">
+            <input type="password" name="password" placeholder="Пароль (1111)" class="w-full bg-gray-700 text-white border-none p-4 rounded-xl mb-4 focus:ring-2 focus:ring-orange-500 outline-none text-center text-lg" required>
+            <button type="submit" class="w-full bg-orange-600 text-white py-4 rounded-xl font-bold hover:bg-orange-500 transition-colors">Увійти</button>
+        </form>
+    </div>
+</body>
+</html>
