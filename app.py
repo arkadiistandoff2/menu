@@ -105,4 +105,5 @@ def handle_review(payload):
     data["reviews"].append(payload)
 
 if __name__ == '__main__':
+    # Для локального запуску
     socketio.run(app, debug=True)
