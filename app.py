@@ -9,7 +9,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "softerx-default-key")
 
 # Важливо для Render: дозволяємо всі origin для сокетів
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
 DB = "db.json"
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "1111")
