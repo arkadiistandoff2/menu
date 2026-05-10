@@ -17,11 +17,13 @@ UPLOAD_FOLDER = os.path.join("static", "images")
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-# Підключення до MongoDB
-# Підключення до твого Cluster0
-MONGO_URI = "mongodb+srv://SofterX:Zlata@cluster0.lmu8qai.mongodb.net/restaurant_db?retryWrites=true&w=majority"
-client = MongoClient(MONGO_URI)
-db = client["restaurant_db"]
+def get_db():
+    uri = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
+    # Додаємо connect=False, щоб уникнути проблем з воркерами
+    client = MongoClient(uri, connect=False)
+    return client["restaurant_db"]
+
+db = get_db()
 
 @app.route("/")
 def home():
