@@ -2,23 +2,35 @@
 
 <!DOCTYPE html>
 <html lang="uk">
+
 <head>
 
 <meta charset="UTF-8">
+
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <title>Admin</title>
 
 <script src="https://cdn.tailwindcss.com"></script>
+
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
 </head>
 
 <body class="bg-zinc-950 text-white p-5">
 
-<h1 class="text-5xl font-bold mb-10">
+<div class="flex justify-between items-center mb-10">
+
+<h1 class="text-5xl font-bold">
 ⚡ Admin Panel
 </h1>
+
+<a href="/logout"
+class="bg-red-500 px-6 py-3 rounded-2xl">
+Logout
+</a>
+
+</div>
 
 <div class="grid md:grid-cols-2 gap-10">
 
@@ -30,24 +42,39 @@
 
 <div class="bg-zinc-900 p-5 rounded-3xl">
 
-<input id="name" placeholder="Назва"
+<input id="name"
+placeholder="Назва"
 class="w-full mb-3 p-4 rounded-xl bg-zinc-800">
 
-<input id="price" placeholder="Ціна"
+<textarea id="description"
+placeholder="Опис"
+class="w-full mb-3 p-4 rounded-xl bg-zinc-800"></textarea>
+
+<input id="price"
+placeholder="Ціна"
 class="w-full mb-3 p-4 rounded-xl bg-zinc-800">
 
-<input id="category" placeholder="Категорія"
+<input id="category"
+placeholder="Категорія"
 class="w-full mb-3 p-4 rounded-xl bg-zinc-800">
 
-<input id="image" placeholder="Фото"
+<input id="image"
+placeholder="Фото (burger.jpg)"
 class="w-full mb-3 p-4 rounded-xl bg-zinc-800">
 
-<button onclick="addMenu()"
-class="bg-green-500 w-full py-4 rounded-xl font-bold">
+<button
+onclick="addMenu()"
+class="bg-green-500 w-full py-4 rounded-2xl font-bold">
 Додати
 </button>
 
 </div>
+
+<h2 class="text-3xl font-bold mt-10 mb-5">
+📦 Товари
+</h2>
+
+<div id="products"></div>
 
 </div>
 
@@ -67,6 +94,74 @@ class="bg-green-500 w-full py-4 rounded-xl font-bold">
 
 const socket = io();
 
+let MENU = [];
+
+async function loadMenu(){
+
+    const res = await fetch("/api/menu");
+
+    const data = await res.json();
+
+    MENU = data;
+
+    const products = document.getElementById("products");
+
+    products.innerHTML = "";
+
+    data.forEach(item=>{
+
+        products.innerHTML += `
+        <div class="bg-zinc-900 p-5 rounded-3xl mb-5">
+
+            <div class="flex gap-5">
+
+                <img
+                src="/static/images/${item.image}"
+                class="w-32 h-32 rounded-2xl object-cover">
+
+                <div>
+
+                    <h2 class="text-2xl font-bold">
+                        ${item.name}
+                    </h2>
+
+                    <div class="text-zinc-400 mt-2">
+                        ${item.description}
+                    </div>
+
+                    <div class="text-green-400 text-2xl mt-2">
+                        ${item.price} ₴
+                    </div>
+
+                    <div class="text-zinc-500 mt-2">
+                        ${item.category}
+                    </div>
+
+                </div>
+
+            </div>
+
+            <div class="flex gap-3 mt-5">
+
+                <button
+                onclick="editProduct(${item.id})"
+                class="bg-yellow-500 px-5 py-3 rounded-xl">
+                    Редагувати
+                </button>
+
+                <button
+                onclick="deleteProduct(${item.id})"
+                class="bg-red-500 px-5 py-3 rounded-xl">
+                    Видалити
+                </button>
+
+            </div>
+
+        </div>
+        `;
+    });
+}
+
 async function addMenu(){
 
     await fetch("/api/menu/add",{
@@ -76,13 +171,50 @@ async function addMenu(){
         },
         body:JSON.stringify({
             name:name.value,
+            description:description.value,
             price:price.value,
             category:category.value,
             image:image.value
         })
     });
 
-    alert("Додано");
+    loadMenu();
+}
+
+async function deleteProduct(id){
+
+    await fetch("/api/menu/delete/" + id,{
+        method:"POST"
+    });
+
+    loadMenu();
+}
+
+async function editProduct(id){
+
+    const item = MENU.find(x=>x.id == id);
+
+    const newName = prompt("Назва",item.name);
+    const newDescription = prompt("Опис",item.description);
+    const newPrice = prompt("Ціна",item.price);
+    const newCategory = prompt("Категорія",item.category);
+    const newImage = prompt("Фото",item.image);
+
+    await fetch("/api/menu/edit/" + id,{
+        method:"POST",
+        headers:{
+            "Content-Type":"application/json"
+        },
+        body:JSON.stringify({
+            name:newName,
+            description:newDescription,
+            price:newPrice,
+            category:newCategory,
+            image:newImage
+        })
+    });
+
+    loadMenu();
 }
 
 async function loadOrders(){
@@ -102,13 +234,13 @@ async function loadOrders(){
 
             <div class="flex justify-between">
 
-                <h2 class="text-2xl font-bold">
+                <h2 class="text-3xl font-bold">
                     Стіл #${order.table}
                 </h2>
 
-                <span class="text-green-400">
+                <div class="text-green-400">
                     ${order.status}
-                </span>
+                </div>
 
             </div>
 
@@ -122,14 +254,20 @@ async function loadOrders(){
 
             </div>
 
-            <button onclick="setStatus(${order.id}, 'В шляху до вас')"
-            class="mt-5 bg-green-500 px-5 py-3 rounded-xl">
-                Готово
+            <div class="mt-5 text-2xl font-bold text-green-400">
+                ${order.total} ₴
+            </div>
+
+            <button
+            onclick="setStatus(${order.id}, 'Готується')"
+            class="mt-5 bg-yellow-500 px-5 py-3 rounded-xl">
+                Готується
             </button>
 
-            <button onclick="cancelOrder(${order.id})"
-            class="mt-5 bg-red-500 px-5 py-3 rounded-xl">
-                Відхилити
+            <button
+            onclick="setStatus(${order.id}, 'В шляху до вас')"
+            class="mt-5 bg-green-500 px-5 py-3 rounded-xl">
+                Готово
             </button>
 
         </div>
@@ -153,25 +291,6 @@ async function setStatus(id,status){
     loadOrders();
 }
 
-async function cancelOrder(id){
-
-    const reason = prompt("Причина");
-
-    await fetch("/api/order/status",{
-        method:"POST",
-        headers:{
-            "Content-Type":"application/json"
-        },
-        body:JSON.stringify({
-            id,
-            status:"Відхилено",
-            comment:reason
-        })
-    });
-
-    loadOrders();
-}
-
 socket.on("new_order",(order)=>{
 
     alert("🔔 Нове замовлення! Стіл #" + order.table);
@@ -180,9 +299,17 @@ socket.on("new_order",(order)=>{
 
 });
 
+socket.on("menu_updated",()=>{
+
+    loadMenu();
+
+});
+
+loadMenu();
 loadOrders();
 
 </script>
 
 </body>
+
 </html>
