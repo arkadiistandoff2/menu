@@ -1,315 +1,269 @@
-<!-- templates/admin.html -->
-
 <!DOCTYPE html>
 <html lang="uk">
-
 <head>
-
-<meta charset="UTF-8">
-
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-<title>Admin</title>
-
-<script src="https://cdn.tailwindcss.com"></script>
-
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Panel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 </head>
+<body class="bg-zinc-950 text-white p-5 font-sans">
 
-<body class="bg-zinc-950 text-white p-5">
-
-<div class="flex justify-between items-center mb-10">
-
-<h1 class="text-5xl font-bold">
-⚡ Admin Panel
-</h1>
-
-<a href="/logout"
-class="bg-red-500 px-6 py-3 rounded-2xl">
-Logout
-</a>
-
+<div class="flex justify-between items-center mb-10 border-b border-zinc-800 pb-5">
+    <h1 class="text-4xl font-bold text-white">Панель керування</h1>
+    <a href="/logout" class="bg-zinc-800 hover:bg-zinc-700 px-6 py-2 rounded-lg text-sm transition">Вийти</a>
 </div>
 
-<div class="grid md:grid-cols-2 gap-10">
+<div class="grid md:grid-cols-3 gap-10">
 
-<div>
+    <!-- Ліва колонка: Товари та категорії -->
+    <div class="md:col-span-1 space-y-8">
+        
+        <!-- Категорії -->
+        <div class="bg-zinc-900 p-6 rounded-2xl">
+            <h2 class="text-2xl font-bold mb-4">Категорії</h2>
+            <div class="flex gap-2 mb-4">
+                <input id="catName" placeholder="Нова категорія" class="w-full p-3 rounded-lg bg-zinc-800 border border-zinc-700 outline-none focus:border-zinc-500">
+                <button onclick="addCategory()" class="bg-blue-600 px-4 rounded-lg font-bold hover:bg-blue-500 transition">Додати</button>
+            </div>
+            <div id="categoriesList" class="space-y-2"></div>
+        </div>
 
-<h2 class="text-3xl font-bold mb-5">
-➕ Додати товар
-</h2>
+        <!-- Додавання товару -->
+        <div class="bg-zinc-900 p-6 rounded-2xl">
+            <h2 class="text-2xl font-bold mb-4">Додати товар</h2>
+            <input id="name" placeholder="Назва" class="w-full mb-3 p-3 rounded-lg bg-zinc-800 border border-zinc-700 outline-none">
+            <textarea id="description" placeholder="Опис" class="w-full mb-3 p-3 rounded-lg bg-zinc-800 border border-zinc-700 outline-none"></textarea>
+            <input id="price" type="number" placeholder="Ціна" class="w-full mb-3 p-3 rounded-lg bg-zinc-800 border border-zinc-700 outline-none">
+            
+            <select id="category" class="w-full mb-3 p-3 rounded-lg bg-zinc-800 border border-zinc-700 outline-none">
+                <!-- Заповнюється через JS -->
+            </select>
+            
+            <label class="block text-sm text-zinc-400 mb-1">Фото товару</label>
+            <input id="image" type="file" accept="image/*" class="w-full mb-5 p-2 rounded-lg bg-zinc-800 border border-zinc-700">
 
-<div class="bg-zinc-900 p-5 rounded-3xl">
+            <button onclick="addMenu()" class="bg-green-600 hover:bg-green-500 w-full py-3 rounded-lg font-bold transition">Додати в меню</button>
+        </div>
 
-<input id="name"
-placeholder="Назва"
-class="w-full mb-3 p-4 rounded-xl bg-zinc-800">
+    </div>
 
-<textarea id="description"
-placeholder="Опис"
-class="w-full mb-3 p-4 rounded-xl bg-zinc-800"></textarea>
+    <!-- Середня колонка: Список товарів -->
+    <div class="md:col-span-1">
+        <h2 class="text-2xl font-bold mb-5">Меню</h2>
+        <div id="products" class="space-y-4"></div>
+    </div>
 
-<input id="price"
-placeholder="Ціна"
-class="w-full mb-3 p-4 rounded-xl bg-zinc-800">
-
-<input id="category"
-placeholder="Категорія"
-class="w-full mb-3 p-4 rounded-xl bg-zinc-800">
-
-<input id="image"
-placeholder="Фото (burger.jpg)"
-class="w-full mb-3 p-4 rounded-xl bg-zinc-800">
-
-<button
-onclick="addMenu()"
-class="bg-green-500 w-full py-4 rounded-2xl font-bold">
-Додати
-</button>
-
-</div>
-
-<h2 class="text-3xl font-bold mt-10 mb-5">
-📦 Товари
-</h2>
-
-<div id="products"></div>
-
-</div>
-
-<div>
-
-<h2 class="text-3xl font-bold mb-5">
-🧾 Замовлення
-</h2>
-
-<div id="orders"></div>
-
-</div>
+    <!-- Права колонка: Замовлення -->
+    <div class="md:col-span-1">
+        <h2 class="text-2xl font-bold mb-5 flex justify-between items-center">
+            Активні замовлення
+        </h2>
+        <div id="orders" class="space-y-4"></div>
+    </div>
 
 </div>
 
 <script>
-
 const socket = io();
-
 let MENU = [];
+let CATEGORIES = [];
 
-async function loadMenu(){
+async function loadData() {
+    const [menuRes, catRes, ordersRes] = await Promise.all([
+        fetch("/api/menu"),
+        fetch("/api/categories"),
+        fetch("/api/orders")
+    ]);
+    
+    MENU = await menuRes.json();
+    CATEGORIES = await catRes.json();
+    const orders = await ordersRes.json();
 
-    const res = await fetch("/api/menu");
+    renderCategories();
+    renderMenu();
+    renderOrders(orders);
+}
 
-    const data = await res.json();
+// === КАТЕГОРІЇ ===
+function renderCategories() {
+    const list = document.getElementById("categoriesList");
+    const select = document.getElementById("category");
+    list.innerHTML = "";
+    select.innerHTML = '<option value="">Оберіть категорію...</option>';
 
-    MENU = data;
+    CATEGORIES.forEach(cat => {
+        list.innerHTML += `
+            <div class="flex justify-between items-center bg-zinc-800 p-3 rounded-lg border border-zinc-700">
+                <span>${cat.name}</span>
+                <div class="flex gap-2 text-sm">
+                    <button onclick="editCategory(${cat.id}, '${cat.name}')" class="text-zinc-400 hover:text-white">Ред.</button>
+                    <button onclick="deleteCategory(${cat.id})" class="text-red-400 hover:text-red-300">Вид.</button>
+                </div>
+            </div>
+        `;
+        select.innerHTML += `<option value="${cat.name}">${cat.name}</option>`;
+    });
+}
 
+async function addCategory() {
+    const input = document.getElementById("catName");
+    if(!input.value.trim()) return;
+    await fetch("/api/category/add", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name: input.value})
+    });
+    input.value = "";
+    loadData();
+}
+
+async function deleteCategory(id) {
+    if(!confirm("Точно видалити категорію?")) return;
+    await fetch("/api/category/delete/" + id, {method: "POST"});
+    loadData();
+}
+
+async function editCategory(id, oldName) {
+    const newName = prompt("Нова назва категорії", oldName);
+    if(!newName || newName === oldName) return;
+    await fetch("/api/category/edit/" + id, {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({name: newName})
+    });
+    loadData();
+}
+
+// === МЕНЮ ===
+function renderMenu() {
     const products = document.getElementById("products");
-
     products.innerHTML = "";
-
-    data.forEach(item=>{
-
+    MENU.forEach(item => {
         products.innerHTML += `
-        <div class="bg-zinc-900 p-5 rounded-3xl mb-5">
+        <div class="bg-zinc-900 p-4 rounded-xl border border-zinc-800 flex flex-col">
+            <div class="flex gap-4">
+                <img src="/static/images/${item.image}" class="w-24 h-24 rounded-lg object-cover bg-zinc-800" onerror="this.src='https://via.placeholder.com/150/3f3f46/ffffff?text=No+Photo'">
+                <div class="flex-1">
+                    <div class="text-xs text-zinc-500 uppercase tracking-wider mb-1">${item.category}</div>
+                    <h3 class="text-lg font-bold">${item.name}</h3>
+                    <div class="text-green-400 font-bold text-lg mt-1">${item.price} ₴</div>
+                </div>
+            </div>
+            <div class="flex gap-2 mt-4">
+                <button onclick="deleteProduct(${item.id})" class="flex-1 bg-red-900/50 hover:bg-red-800 text-red-200 py-2 rounded-lg text-sm transition">Видалити</button>
+            </div>
+        </div>
+        `;
+    });
+}
 
-            <div class="flex gap-5">
+async function addMenu() {
+    const name = document.getElementById("name").value;
+    const desc = document.getElementById("description").value;
+    const price = document.getElementById("price").value;
+    const cat = document.getElementById("category").value;
+    const file = document.getElementById("image").files[0];
 
-                <img
-                src="/static/images/${item.image}"
-                class="w-32 h-32 rounded-2xl object-cover">
+    if(!name || !price || !cat) return alert("Заповніть назву, ціну та категорію!");
 
+    const formData = new FormData();
+    formData.append("name", name);
+    formData.append("description", desc);
+    formData.append("price", price);
+    formData.append("category", cat);
+    if(file) formData.append("image", file);
+
+    await fetch("/api/menu/add", { method: "POST", body: formData });
+    
+    document.getElementById("name").value = "";
+    document.getElementById("description").value = "";
+    document.getElementById("price").value = "";
+    document.getElementById("image").value = "";
+    loadData();
+}
+
+async function deleteProduct(id) {
+    if(!confirm("Точно видалити товар?")) return;
+    await fetch("/api/menu/delete/" + id, {method: "POST"});
+    loadData();
+}
+
+// === ЗАМОВЛЕННЯ ===
+function renderOrders(orders) {
+    const ordersDiv = document.getElementById("orders");
+    if(orders.length === 0) {
+        ordersDiv.innerHTML = `<div class="bg-zinc-900 p-8 rounded-xl text-center text-zinc-500">Немає активних замовлень</div>`;
+        return;
+    }
+
+    ordersDiv.innerHTML = "";
+    orders.reverse().forEach(order => {
+        let itemsHtml = order.items.map(item => `
+            <div class="flex justify-between items-center py-2 border-b border-zinc-800/50 last:border-0">
+                <div class="flex flex-col">
+                    <span class="${item.status === 'Готово' ? 'text-zinc-500 line-through' : ''}">${item.name}</span>
+                    <span class="text-xs ${item.status === 'В черзі' ? 'text-yellow-500' : item.status === 'Скасовано' ? 'text-red-500' : 'text-green-500'}">${item.status}</span>
+                </div>
+                ${item.status === 'В черзі' ? `
+                <div class="flex gap-2">
+                    <button onclick="setItemStatus(${order.id}, '${item.uid}', 'Готово')" class="bg-zinc-800 text-green-400 px-3 py-1 rounded text-sm hover:bg-zinc-700">✓ Готово</button>
+                    <button onclick="setItemStatus(${order.id}, '${item.uid}', 'Скасовано')" class="bg-zinc-800 text-red-400 px-3 py-1 rounded text-sm hover:bg-zinc-700">✕ Відмінити</button>
+                </div>
+                ` : ''}
+            </div>
+        `).join("");
+
+        ordersDiv.innerHTML += `
+        <div class="bg-zinc-900 p-5 rounded-2xl border border-zinc-800">
+            <div class="flex justify-between items-center mb-4 border-b border-zinc-800 pb-3">
                 <div>
-
-                    <h2 class="text-2xl font-bold">
-                        ${item.name}
-                    </h2>
-
-                    <div class="text-zinc-400 mt-2">
-                        ${item.description}
-                    </div>
-
-                    <div class="text-green-400 text-2xl mt-2">
-                        ${item.price} ₴
-                    </div>
-
-                    <div class="text-zinc-500 mt-2">
-                        ${item.category}
-                    </div>
-
+                    <h3 class="text-xl font-bold text-white">Стіл #${order.table}</h3>
+                    <div class="text-xs text-zinc-500">Час: ${order.created}</div>
                 </div>
-
+                <div class="text-green-400 font-bold text-xl">${order.total} ₴</div>
+            </div>
+            
+            <div class="mb-5">
+                ${itemsHtml}
             </div>
 
-            <div class="flex gap-3 mt-5">
-
-                <button
-                onclick="editProduct(${item.id})"
-                class="bg-yellow-500 px-5 py-3 rounded-xl">
-                    Редагувати
-                </button>
-
-                <button
-                onclick="deleteProduct(${item.id})"
-                class="bg-red-500 px-5 py-3 rounded-xl">
-                    Видалити
-                </button>
-
+            <div class="grid grid-cols-2 gap-3 pt-3 border-t border-zinc-800">
+                <button onclick="setAllStatus(${order.id}, 'Скасовано')" class="bg-red-900/30 text-red-400 py-2 rounded-lg text-sm hover:bg-red-900/50 transition">Скасувати все</button>
+                <button onclick="setAllStatus(${order.id}, 'Готово')" class="bg-green-900/30 text-green-400 py-2 rounded-lg text-sm hover:bg-green-900/50 transition">Готово все</button>
             </div>
-
         </div>
         `;
     });
 }
 
-async function addMenu(){
-
-    await fetch("/api/menu/add",{
-        method:"POST",
-        headers:{
-            "Content-Type":"application/json"
-        },
-        body:JSON.stringify({
-            name:name.value,
-            description:description.value,
-            price:price.value,
-            category:category.value,
-            image:image.value
-        })
-    });
-
-    loadMenu();
-}
-
-async function deleteProduct(id){
-
-    await fetch("/api/menu/delete/" + id,{
-        method:"POST"
-    });
-
-    loadMenu();
-}
-
-async function editProduct(id){
-
-    const item = MENU.find(x=>x.id == id);
-
-    const newName = prompt("Назва",item.name);
-    const newDescription = prompt("Опис",item.description);
-    const newPrice = prompt("Ціна",item.price);
-    const newCategory = prompt("Категорія",item.category);
-    const newImage = prompt("Фото",item.image);
-
-    await fetch("/api/menu/edit/" + id,{
-        method:"POST",
-        headers:{
-            "Content-Type":"application/json"
-        },
-        body:JSON.stringify({
-            name:newName,
-            description:newDescription,
-            price:newPrice,
-            category:newCategory,
-            image:newImage
-        })
-    });
-
-    loadMenu();
-}
-
-async function loadOrders(){
-
-    const res = await fetch("/api/orders");
-
-    const data = await res.json();
-
-    const orders = document.getElementById("orders");
-
-    orders.innerHTML = "";
-
-    data.reverse().forEach(order=>{
-
-        orders.innerHTML += `
-        <div class="bg-zinc-900 p-5 rounded-3xl mb-5">
-
-            <div class="flex justify-between">
-
-                <h2 class="text-3xl font-bold">
-                    Стіл #${order.table}
-                </h2>
-
-                <div class="text-green-400">
-                    ${order.status}
-                </div>
-
-            </div>
-
-            <div class="mt-5">
-
-                ${order.items.map(item=>`
-                    <div class="mb-2">
-                        ${item.name}
-                    </div>
-                `).join("")}
-
-            </div>
-
-            <div class="mt-5 text-2xl font-bold text-green-400">
-                ${order.total} ₴
-            </div>
-
-            <button
-            onclick="setStatus(${order.id}, 'Готується')"
-            class="mt-5 bg-yellow-500 px-5 py-3 rounded-xl">
-                Готується
-            </button>
-
-            <button
-            onclick="setStatus(${order.id}, 'В шляху до вас')"
-            class="mt-5 bg-green-500 px-5 py-3 rounded-xl">
-                Готово
-            </button>
-
-        </div>
-        `;
+async function setItemStatus(orderId, itemUid, status) {
+    await fetch("/api/order/item_status", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ order_id: orderId, item_uid: itemUid, status: status })
     });
 }
 
-async function setStatus(id,status){
-
-    await fetch("/api/order/status",{
-        method:"POST",
-        headers:{
-            "Content-Type":"application/json"
-        },
-        body:JSON.stringify({
-            id,
-            status
-        })
+async function setAllStatus(orderId, status) {
+    if(!confirm(`Точно позначити все як "${status}"?`)) return;
+    await fetch("/api/order/all_status", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ order_id: orderId, status: status })
     });
-
-    loadOrders();
 }
 
-socket.on("new_order",(order)=>{
-
-    alert("🔔 Нове замовлення! Стіл #" + order.table);
-
-    loadOrders();
-
+socket.on("new_order", (order) => {
+    loadData();
+    // Опціонально можна додати звук
 });
 
-socket.on("menu_updated",()=>{
-
-    loadMenu();
-
+socket.on("order_updated", () => {
+    loadData();
 });
 
-loadMenu();
-loadOrders();
+socket.on("menu_updated", () => {
+    loadData();
+});
 
+loadData();
 </script>
-
 </body>
-
 </html>
