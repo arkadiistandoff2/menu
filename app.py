@@ -1,17 +1,18 @@
 # app.py
 
-from flask import Flask, render_template, request, jsonify, session, redirect
-from flask_socketio import SocketIO, emit
+from flask import Flask, render_template, request, jsonify, redirect, session
+from flask_socketio import SocketIO
 import json
 import os
 from datetime import datetime
 
 app = Flask(__name__)
-app.secret_key = "softerx_secret_key"
+app.secret_key = "softerx"
 
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-DB_FILE = "db.json"
+DB = "db.json"
+
 ADMIN_PASSWORD = "1111"
 
 
@@ -20,8 +21,10 @@ ADMIN_PASSWORD = "1111"
 # =========================
 
 def load_db():
-    if not os.path.exists(DB_FILE):
-        default_db = {
+
+    if not os.path.exists(DB):
+
+        data = {
             "settings": {
                 "tables": 5
             },
@@ -30,15 +33,16 @@ def load_db():
             "reviews": []
         }
 
-        with open(DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(default_db, f, indent=4, ensure_ascii=False)
+        with open(DB, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
 
-    with open(DB_FILE, "r", encoding="utf-8") as f:
+    with open(DB, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
 def save_db(data):
-    with open(DB_FILE, "w", encoding="utf-8") as f:
+
+    with open(DB, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 
@@ -53,73 +57,118 @@ def home():
 
 @app.route("/<int:table_id>")
 def table(table_id):
-    db = load_db()
-
-    if table_id > db["settings"]["tables"]:
-        return "Столик не існує"
-
     return render_template("index.html", table_id=table_id)
 
 
 @app.route("/admin")
 def admin():
+
     if not session.get("admin"):
         return redirect("/login")
 
     return render_template("admin.html")
 
 
+@app.route("/logout")
+def logout():
+
+    session.clear()
+
+    return redirect("/login")
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
+
+    error = ""
+
     if request.method == "POST":
+
         password = request.form.get("password")
 
         if password == ADMIN_PASSWORD:
+
             session["admin"] = True
+
             return redirect("/admin")
 
-    return """
+        else:
+            error = "Неправильний пароль"
+
+    return f"""
     <html>
-    <body style="background:#111;color:white;font-family:sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;">
-        <form method="POST">
-            <input type="password" name="password" placeholder="Пароль"
-            style="padding:15px;border:none;border-radius:10px;">
-            <button style="padding:15px;border:none;border-radius:10px;background:lime;">
+
+    <head>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    </head>
+
+    <body class="bg-black flex justify-center items-center h-screen">
+
+        <form method="POST"
+        class="bg-zinc-900 p-10 rounded-3xl w-[400px]">
+
+            <h1 class="text-white text-4xl font-bold mb-5">
+                Admin Login
+            </h1>
+
+            <input
+            type="password"
+            name="password"
+            placeholder="Пароль"
+            class="w-full p-4 rounded-xl bg-zinc-800 text-white mb-4">
+
+            <button
+            class="w-full bg-green-500 py-4 rounded-xl text-white font-bold">
                 Увійти
             </button>
+
+            <p class="text-red-500 mt-4">
+                {error}
+            </p>
+
         </form>
+
     </body>
+
     </html>
     """
 
 
 # =========================
-# API MENU
+# MENU API
 # =========================
 
 @app.route("/api/menu")
 def get_menu():
+
     db = load_db()
+
     return jsonify(db["menu"])
 
 
 @app.route("/api/menu/add", methods=["POST"])
 def add_menu():
+
     if not session.get("admin"):
         return jsonify({"error": "Unauthorized"})
 
     db = load_db()
+
     data = request.json
 
     item = {
         "id": int(datetime.now().timestamp()),
         "name": data["name"],
+        "description": data["description"],
         "price": data["price"],
-        "category": data["category"],
-        "image": data["image"]
+        "image": data["image"],
+        "category": data["category"]
     }
 
     db["menu"].append(item)
+
     save_db(db)
 
     socketio.emit("menu_updated")
@@ -129,6 +178,7 @@ def add_menu():
 
 @app.route("/api/menu/delete/<int:item_id>", methods=["POST"])
 def delete_menu(item_id):
+
     if not session.get("admin"):
         return jsonify({"error": "Unauthorized"})
 
@@ -143,12 +193,40 @@ def delete_menu(item_id):
     return jsonify({"success": True})
 
 
+@app.route("/api/menu/edit/<int:item_id>", methods=["POST"])
+def edit_menu(item_id):
+
+    if not session.get("admin"):
+        return jsonify({"error": "Unauthorized"})
+
+    db = load_db()
+
+    data = request.json
+
+    for item in db["menu"]:
+
+        if item["id"] == item_id:
+
+            item["name"] = data["name"]
+            item["description"] = data["description"]
+            item["price"] = data["price"]
+            item["image"] = data["image"]
+            item["category"] = data["category"]
+
+    save_db(db)
+
+    socketio.emit("menu_updated")
+
+    return jsonify({"success": True})
+
+
 # =========================
 # ORDERS
 # =========================
 
 @app.route("/api/order", methods=["POST"])
 def create_order():
+
     db = load_db()
 
     data = request.json
@@ -157,9 +235,9 @@ def create_order():
         "id": int(datetime.now().timestamp()),
         "table": data["table"],
         "items": data["items"],
+        "total": data["total"],
         "status": "В черзі",
-        "created": str(datetime.now()),
-        "comment": ""
+        "created": str(datetime.now())
     }
 
     db["orders"].append(order)
@@ -173,12 +251,18 @@ def create_order():
 
 @app.route("/api/orders")
 def get_orders():
+
+    if not session.get("admin"):
+        return jsonify([])
+
     db = load_db()
+
     return jsonify(db["orders"])
 
 
 @app.route("/api/order/status", methods=["POST"])
-def update_order():
+def order_status():
+
     if not session.get("admin"):
         return jsonify({"error": "Unauthorized"})
 
@@ -187,11 +271,10 @@ def update_order():
     data = request.json
 
     for order in db["orders"]:
-        if order["id"] == data["id"]:
-            order["status"] = data["status"]
 
-            if "comment" in data:
-                order["comment"] = data["comment"]
+        if order["id"] == data["id"]:
+
+            order["status"] = data["status"]
 
     save_db(db)
 
@@ -201,43 +284,12 @@ def update_order():
 
 
 # =========================
-# REVIEWS
-# =========================
-
-@app.route("/api/review", methods=["POST"])
-def add_review():
-    db = load_db()
-
-    data = request.json
-
-    review = {
-        "name": data["name"],
-        "rating": data["rating"],
-        "comment": data["comment"]
-    }
-
-    db["reviews"].append(review)
-
-    save_db(db)
-
-    socketio.emit("review_added", review)
-
-    return jsonify({"success": True})
-
-
-@app.route("/api/reviews")
-def get_reviews():
-    db = load_db()
-    return jsonify(db["reviews"])
-
-
-# =========================
-# SOCKETS
+# SOCKET
 # =========================
 
 @socketio.on("connect")
 def connect():
-    print("User connected")
+    print("Connected")
 
 
 # =========================
@@ -245,6 +297,7 @@ def connect():
 # =========================
 
 if __name__ == "__main__":
+
     socketio.run(
         app,
         host="0.0.0.0",
