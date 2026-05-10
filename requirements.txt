@@ -3,5 +3,5 @@ Flask-SocketIO==5.3.6
 gevent==23.9.1
 gevent-websocket==0.10.1
 gunicorn==21.2.0
-pymongo[srv]==4.6.1
+pymongo[srv]==3.12
 dnspython==2.4.2
