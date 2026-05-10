@@ -85,7 +85,9 @@
 </div>
 
 <script>
-const socket = io();
+const socket = io({
+    transports: ["websocket"]
+});
 const TABLE_ID = {{ table_id }};
 
 let CLIENT_ID = localStorage.getItem('clientId');
