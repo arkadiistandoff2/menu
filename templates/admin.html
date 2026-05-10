@@ -65,7 +65,9 @@
 </div>
 
 <script>
-const socket = io();
+const socket = io({
+    transports: ["websocket"]
+});
 let MENU = [], CATEGORIES = [];
 
 function showToast(msg) {
