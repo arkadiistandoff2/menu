@@ -17,14 +17,15 @@ UPLOAD_FOLDER = os.path.join("static", "images")
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+from werkzeug.local import LocalProxy
+
 def get_db():
     uri = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
-    # Додаємо connect=False, щоб уникнути проблем з воркерами
     client = MongoClient(uri, connect=False)
     return client["restaurant_db"]
 
-db = get_db()
-
+# LocalProxy змусить Python підключити базу ТІЛЬКИ при першому запиті до неї
+db = LocalProxy(get_db)
 @app.route("/")
 def home():
     return redirect("/1")
