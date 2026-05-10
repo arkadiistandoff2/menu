@@ -77,12 +77,12 @@ def login():
     return f"""
     <html>
     <head><script src="https://cdn.tailwindcss.com"></script></head>
-    <body class="bg-black flex justify-center items-center h-screen">
+    <body class="bg-black flex justify-center items-center h-screen font-sans">
         <form method="POST" class="bg-zinc-900 p-10 rounded-3xl w-[400px]">
-            <h1 class="text-white text-4xl font-bold mb-5">Admin Login</h1>
-            <input type="password" name="password" placeholder="Пароль" class="w-full p-4 rounded-xl bg-zinc-800 text-white mb-4">
-            <button class="w-full bg-green-500 py-4 rounded-xl text-white font-bold">Увійти</button>
-            <p class="text-red-500 mt-4">{error}</p>
+            <h1 class="text-white text-4xl font-bold mb-5">Вхід для адміна</h1>
+            <input type="password" name="password" placeholder="Пароль" class="w-full p-4 rounded-xl bg-zinc-800 text-white mb-4 outline-none border border-zinc-700">
+            <button class="w-full bg-blue-600 hover:bg-blue-500 py-4 rounded-xl text-white font-bold transition">Увійти</button>
+            <p class="text-red-500 mt-4 text-center">{error}</p>
         </form>
     </body>
     </html>
@@ -102,10 +102,7 @@ def add_category():
     if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
     db = load_db()
     data = request.json
-    cat = {
-        "id": int(datetime.now().timestamp()),
-        "name": data["name"]
-    }
+    cat = {"id": int(datetime.now().timestamp()), "name": data["name"]}
     if "categories" not in db:
         db["categories"] = []
     db["categories"].append(cat)
@@ -183,33 +180,6 @@ def delete_menu(item_id):
     socketio.emit("menu_updated")
     return jsonify({"success": True})
 
-@app.route("/api/menu/edit/<int:item_id>", methods=["POST"])
-def edit_menu(item_id):
-    if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
-    db = load_db()
-    
-    name = request.form.get("name")
-    description = request.form.get("description")
-    price = request.form.get("price")
-    category = request.form.get("category")
-    image_file = request.files.get("image")
-
-    for item in db["menu"]:
-        if item["id"] == item_id:
-            item["name"] = name
-            item["description"] = description
-            item["price"] = price
-            item["category"] = category
-            if image_file:
-                ext = image_file.filename.split('.')[-1]
-                image_name = f"{uuid.uuid4().hex}.{ext}"
-                image_file.save(os.path.join(app.config["UPLOAD_FOLDER"], image_name))
-                item["image"] = image_name
-
-    save_db(db)
-    socketio.emit("menu_updated")
-    return jsonify({"success": True})
-
 # =========================
 # ORDERS API
 # =========================
@@ -219,37 +189,45 @@ def create_order():
     db = load_db()
     data = request.json
     
-    # Додаємо унікальні ID для кожної замовленої позиції
+    order_id = int(datetime.now().timestamp())
     items_with_ids = []
     for i, item in enumerate(data["items"]):
         items_with_ids.append({
-            "uid": f"{int(datetime.now().timestamp())}_{i}",
+            "uid": f"{order_id}_{i}",
             "name": item["name"],
             "price": item["price"],
             "status": "В черзі"
         })
 
     order = {
-        "id": int(datetime.now().timestamp()),
+        "id": order_id,
         "table": data["table"],
         "items": items_with_ids,
         "total": data["total"],
-        "status": "Активне", # Активне, Завершене
+        "status": "Активне",
         "created": str(datetime.now().strftime("%H:%M"))
     }
 
     db["orders"].append(order)
     save_db(db)
     socketio.emit("new_order", order)
-    return jsonify({"success": True})
+    return jsonify({"success": True, "order_id": order_id})
 
 @app.route("/api/orders")
 def get_orders():
     if not session.get("admin"): return jsonify([])
     db = load_db()
-    # Повертаємо тільки активні замовлення для зручності
     active_orders = [o for o in db["orders"] if o["status"] == "Активне"]
     return jsonify(active_orders)
+
+@app.route("/api/client_orders", methods=["POST"])
+def get_client_orders():
+    # Роут для клієнта, щоб перевіряти свої замовлення за ID
+    db = load_db()
+    data = request.json
+    my_ids = data.get("ids", [])
+    my_orders = [o for o in db["orders"] if o["id"] in my_ids]
+    return jsonify(my_orders)
 
 @app.route("/api/order/item_status", methods=["POST"])
 def update_item_status():
@@ -257,19 +235,26 @@ def update_item_status():
     db = load_db()
     data = request.json
     
+    updated_item_name = ""
     for order in db["orders"]:
         if order["id"] == data["order_id"]:
             for item in order["items"]:
                 if item["uid"] == data["item_uid"]:
                     item["status"] = data["status"]
+                    updated_item_name = item["name"]
             
-            # Перевірка чи всі готові/скасовані
-            all_done = all(i["status"] in ["Готово", "Скасовано"] for i in order["items"])
+            all_done = all(i["status"] in ["Готово", "Відхилено"] for i in order["items"])
             if all_done:
                 order["status"] = "Завершене"
 
     save_db(db)
     socketio.emit("order_updated")
+    # Надсилаємо спец-івент для пуш-сповіщень клієнта
+    socketio.emit("notify_client", {
+        "order_id": data["order_id"],
+        "title": "Оновлення замовлення",
+        "body": f"Ваша позиція '{updated_item_name}' - {data['status'].lower()}!"
+    })
     return jsonify({"success": True})
 
 @app.route("/api/order/all_status", methods=["POST"])
@@ -286,6 +271,11 @@ def update_all_status():
 
     save_db(db)
     socketio.emit("order_updated")
+    socketio.emit("notify_client", {
+        "order_id": data["order_id"],
+        "title": "Оновлення замовлення",
+        "body": f"Усе ваше замовлення - {data['status'].lower()}!"
+    })
     return jsonify({"success": True})
 
 if __name__ == "__main__":
