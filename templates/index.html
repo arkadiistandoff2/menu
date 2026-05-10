@@ -1,148 +1,219 @@
+<!-- templates/index.html -->
+
 <!DOCTYPE html>
 <html lang="uk">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ппп - Твій улюблений заклад</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;900&display=swap" rel="stylesheet">
-    <style>
-        body { font-family: 'Nunito', sans-serif; background-color: #FAFAF9; }
-        .splash { position: fixed; inset: 0; background: #ea580c; color: white; display: flex; 
-                  align-items: center; justify-content: center; z-index: 9999; transition: opacity 0.8s ease; }
-        .glass { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); }
-    </style>
-</head>
-<body class="text-gray-800 pb-20">
 
-<!-- ЗАСТАВКА -->
-<div id="splash" class="splash">
-    <h1 class="text-8xl md:text-9xl font-black tracking-tighter drop-shadow-lg">ппп</h1>
+<head>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<title>Restaurant</title>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;700&display=swap" rel="stylesheet">
+
+<style>
+
+body{
+    font-family: Montserrat;
+}
+
+</style>
+
+</head>
+
+<body class="bg-zinc-950 text-white">
+
+<div class="p-5">
+
+<h1 class="text-5xl font-bold mb-10">
+🍽 Меню
+</h1>
+
+<div id="menu"
+class="grid grid-cols-1 md:grid-cols-3 gap-5">
 </div>
 
-<!-- НАВІГАЦІЯ -->
-<nav class="glass sticky top-0 z-50 border-b border-gray-200 px-6 py-4 flex justify-between items-center shadow-sm">
-    <h1 class="text-3xl font-black text-orange-600 tracking-tighter">ппп</h1>
-    <div class="bg-orange-100 text-orange-800 px-4 py-1.5 rounded-full font-bold shadow-inner">
-        Столик №{{ table_id }}
-    </div>
-</nav>
+<h2 class="text-4xl font-bold mt-10 mb-5">
+🛒 Кошик
+</h2>
 
-<div class="max-w-3xl mx-auto px-4 mt-6">
-    
-    <!-- МОЇ ЗАМОВЛЕННЯ (Якщо є) -->
-    {% set my_orders = orders|selectattr("table", "equalto", table_id)|list %}
-    {% if my_orders %}
-    <div class="mb-8">
-        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">🛒 Ваше замовлення</h2>
-        <div class="space-y-3">
-            {% for order in my_orders %}
-            <div class="bg-white p-4 rounded-2xl shadow-sm border-l-4 flex flex-col md:flex-row md:items-center justify-between gap-2
-                {% if order.status == 'В шляху до вас' %} border-green-500 
-                {% elif order.status == 'Відхилено' %} border-red-500 
-                {% else %} border-orange-400 {% endif %}">
-                
-                <span class="font-bold text-lg">{{ order.item_name }}</span>
-                
-                <div class="flex flex-col items-end">
-                    <span class="text-sm px-3 py-1 rounded-full font-bold 
-                        {% if order.status == 'В шляху до вас' %} bg-green-100 text-green-700 
-                        {% elif order.status == 'Відхилено' %} bg-red-100 text-red-700 
-                        {% else %} bg-orange-100 text-orange-700 animate-pulse {% endif %}">
-                        {{ order.status }}
-                    </span>
-                    {% if order.comment %}<span class="text-xs text-red-500 mt-1 font-bold">Причина: {{ order.comment }}</span>{% endif %}
-                </div>
-            </div>
-            {% endfor %}
-        </div>
-    </div>
-    {% endif %}
+<div id="cart"></div>
 
-    <!-- МЕНЮ -->
-    <h2 class="text-2xl font-bold mb-4">🍽️ Меню</h2>
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {% for item in menu %}
-        <div class="bg-white p-5 rounded-2xl shadow-sm hover:shadow-md transition-shadow border border-gray-100 flex flex-col justify-between">
-            <div>
-                <span class="text-xs font-bold text-gray-400 uppercase tracking-wider">{{ item.category }}</span>
-                <h3 class="text-xl font-bold mt-1">{{ item.name }}</h3>
-                <p class="text-orange-600 font-black text-lg mt-2">{{ item.price }} ₴</p>
-            </div>
-            <button onclick="sendOrder('{{ item.name }}')" class="mt-4 w-full bg-gray-900 text-white py-3 rounded-xl font-bold hover:bg-orange-600 transition-colors active:scale-95">
-                Замовити
-            </button>
-        </div>
-        {% endfor %}
-    </div>
+<div class="mt-5 text-3xl font-bold">
+Итого:
+<span id="total">0</span> ₴
+</div>
 
-    <!-- ВІДГУКИ -->
-    <div class="mt-12">
-        <h2 class="text-2xl font-bold mb-4">💬 Відгуки</h2>
-        
-        <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 mb-6">
-            <h3 class="font-bold mb-3 text-gray-700">Залишити свій відгук</h3>
-            <input id="rev_name" type="text" placeholder="Ваше ім'я" class="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl mb-3 focus:outline-none focus:border-orange-500">
-            <select id="rev_stars" class="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl mb-3 focus:outline-none">
-                <option value="5">⭐⭐⭐⭐⭐ Чудово</option>
-                <option value="4">⭐⭐⭐⭐ Добре</option>
-                <option value="3">⭐⭐⭐ Нормально</option>
-                <option value="2">⭐⭐ Погано</option>
-                <option value="1">⭐ Жахливо</option>
-            </select>
-            <textarea id="rev_text" placeholder="Як вам у нас?..." rows="3" class="w-full bg-gray-50 border border-gray-200 p-3 rounded-xl mb-3 focus:outline-none focus:border-orange-500"></textarea>
-            <button onclick="sendReview()" class="w-full bg-orange-500 text-white py-3 rounded-xl font-bold hover:bg-orange-600 transition-colors">Надіслати відгук</button>
-        </div>
+<button onclick="sendOrder()"
+class="mt-5 bg-green-500 px-8 py-4 rounded-2xl text-xl font-bold">
+Замовити
+</button>
 
-        <div class="space-y-4">
-            {% for rev in reviews|reverse %}
-            <div class="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
-                <div class="flex justify-between items-center mb-2">
-                    <span class="font-bold text-gray-800">{{ rev.name }}</span>
-                    <span class="text-yellow-400 text-lg">{% for i in range(rev.stars|int) %}★{% endfor %}</span>
-                </div>
-                <p class="text-gray-600">{{ rev.text }}</p>
-            </div>
-            {% endfor %}
-        </div>
-    </div>
 </div>
 
 <script>
-    const socket = io();
-    const tableId = {{ table_id }};
 
-    // Прибираємо заставку красиво
-    window.onload = () => {
-        setTimeout(() => { 
-            const splash = document.getElementById('splash');
-            splash.style.opacity = '0'; 
-            setTimeout(() => splash.remove(), 800); 
-        }, 1200);
-    };
+const socket = io();
 
-    function sendOrder(name) {
-        socket.emit('new_order', {table: tableId, item: name});
-    }
+const TABLE_ID = {{ table_id }};
 
-    function sendReview() {
-        const text = document.getElementById('rev_text').value;
-        if(!text) return alert("Бро, напишіть хоч пару слів у відгуку!");
-        socket.emit('new_review', {
-            name: document.getElementById('rev_name').value || "Анонім",
-            stars: document.getElementById('rev_stars').value,
-            text: text
-        });
-        setTimeout(() => location.reload(), 300);
-    }
+let cart = [];
 
-    // Слухаємо бекенд: якщо статус змінився, оновлюємо сторінку
-    socket.on('status_updated', (data) => {
-        if(data.table == tableId) location.reload();
+async function loadMenu(){
+
+    const res = await fetch("/api/menu");
+
+    const data = await res.json();
+
+    const menu = document.getElementById("menu");
+
+    menu.innerHTML = "";
+
+    data.forEach(item=>{
+
+        menu.innerHTML += `
+        <div class="bg-zinc-900 rounded-3xl overflow-hidden">
+
+            <img
+            src="/static/images/${item.image}"
+            class="w-full h-64 object-cover">
+
+            <div class="p-5">
+
+                <h2 class="text-3xl font-bold">
+                    ${item.name}
+                </h2>
+
+                <p class="text-zinc-400 mt-3">
+                    ${item.description}
+                </p>
+
+                <div class="mt-3 text-green-400 text-2xl font-bold">
+                    ${item.price} ₴
+                </div>
+
+                <div class="text-zinc-500 mt-2">
+                    ${item.category}
+                </div>
+
+                <button
+                onclick='addToCart(${JSON.stringify(item)})'
+                class="mt-5 bg-green-500 w-full py-4 rounded-2xl font-bold">
+                    Додати в кошик
+                </button>
+
+            </div>
+
+        </div>
+        `;
     });
-    // Якщо я сам зробив замовлення - теж оновлюю, щоб побачити його в списку
-    socket.on('order_received', () => location.reload());
+}
+
+function addToCart(item){
+
+    cart.push(item);
+
+    renderCart();
+}
+
+function renderCart(){
+
+    const cartDiv = document.getElementById("cart");
+
+    cartDiv.innerHTML = "";
+
+    let total = 0;
+
+    cart.forEach((item,index)=>{
+
+        total += Number(item.price);
+
+        cartDiv.innerHTML += `
+        <div class="bg-zinc-900 p-5 rounded-2xl mb-3 flex justify-between items-center">
+
+            <div>
+
+                <div class="text-2xl font-bold">
+                    ${item.name}
+                </div>
+
+                <div class="text-zinc-400">
+                    ${item.price} ₴
+                </div>
+
+            </div>
+
+            <button
+            onclick="removeItem(${index})"
+            class="bg-red-500 px-4 py-2 rounded-xl">
+                ✖
+            </button>
+
+        </div>
+        `;
+    });
+
+    total.innerText = total;
+}
+
+function removeItem(index){
+
+    cart.splice(index,1);
+
+    renderCart();
+}
+
+async function sendOrder(){
+
+    if(cart.length <= 0){
+        return;
+    }
+
+    let totalPrice = 0;
+
+    cart.forEach(item=>{
+        totalPrice += Number(item.price);
+    });
+
+    await fetch("/api/order",{
+        method:"POST",
+        headers:{
+            "Content-Type":"application/json"
+        },
+        body:JSON.stringify({
+            table:TABLE_ID,
+            items:cart,
+            total:totalPrice
+        })
+    });
+
+    alert("Замовлення створено");
+
+    cart = [];
+
+    renderCart();
+}
+
+socket.on("menu_updated",()=>{
+
+    loadMenu();
+
+});
+
+socket.on("order_updated",(data)=>{
+
+    alert("Статус: " + data.status);
+
+});
+
+loadMenu();
+
 </script>
+
 </body>
+
 </html>
