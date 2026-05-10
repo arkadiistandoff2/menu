@@ -4,10 +4,12 @@ monkey.patch_all()
 import os
 import json
 import uuid
+import certifi
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, redirect, session, Response
 from flask_socketio import SocketIO
 from pymongo import MongoClient
+from werkzeug.local import LocalProxy
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "softerx-default-key")
@@ -18,16 +20,26 @@ UPLOAD_FOLDER = os.path.join("static", "images")
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-MONGO_URI = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
+# --- БЕЗПЕЧНЕ ПІДКЛЮЧЕННЯ ДО БАЗИ ДАНИХ ---
+_db_client = None
 
-mongo_client = MongoClient(
-    MONGO_URI,
-    maxPoolSize=50,
-    minPoolSize=5,
-    serverSelectionTimeoutMS=5000
-)
+def get_db():
+    global _db_client
+    if _db_client is None:
+        uri = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
+        # Підключаємося "ліниво" і з правильними сертифікатами
+        client = MongoClient(
+            uri,
+            tlsCAFile=certifi.where(),
+            connect=False, # Рятує від SIGKILL та таймаутів
+            serverSelectionTimeoutMS=5000,
+            maxPoolSize=50
+        )
+        _db_client = client["restaurant_db"]
+    return _db_client
 
-db = mongo_client["restaurant_db"]
+# LocalProxy дозволяє використовувати 'db' всюди в коді як зазвичай
+db = LocalProxy(get_db)
 
 
 @app.route("/")
@@ -55,7 +67,7 @@ def login():
             session["admin"] = True
             return redirect("/admin")
         return "<script>alert('Неправильний пароль'); window.location='/login';</script>"
-    return render_template("login.html") # Або твій HTML як раніше
+    return render_template("login.html")
 
 # --- КАТЕГОРІЇ ТА МЕНЮ ---
 @app.route("/api/categories")
@@ -252,4 +264,4 @@ def import_data():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    socketio.run(app, host="0.0.0.0", port=port )
+    socketio.run(app, host="0.0.0.0", port=port)
