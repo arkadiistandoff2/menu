@@ -6,60 +6,70 @@
     <title>Admin Panel</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>body { font-family: 'Inter', sans-serif; }</style>
 </head>
-<body class="bg-zinc-950 text-white p-5 font-sans">
+<body class="bg-zinc-950 text-white min-h-screen">
 
-<div class="flex justify-between items-center mb-10 border-b border-zinc-800 pb-5">
-    <h1 class="text-4xl font-bold text-white">Панель керування</h1>
-    <a href="/logout" class="bg-zinc-800 hover:bg-zinc-700 px-6 py-2 rounded-lg text-sm transition">Вийти</a>
+<!-- Toasts Контейнер -->
+<div id="toast-container" class="fixed top-5 right-5 z-[100] flex flex-col gap-3 pointer-events-none"></div>
+
+<!-- Кастомний Confirm Modal -->
+<div id="confirm-modal" class="fixed inset-0 bg-black/80 z-[110] hidden flex items-center justify-center backdrop-blur-sm transition-opacity">
+    <div class="bg-zinc-900 p-8 rounded-2xl w-full max-w-sm border border-zinc-800 shadow-2xl text-center">
+        <h3 id="confirm-text" class="text-xl font-bold mb-6">Ви впевнені?</h3>
+        <div class="flex gap-4">
+            <button onclick="closeConfirm(false)" class="flex-1 bg-zinc-800 hover:bg-zinc-700 py-3 rounded-xl font-bold transition">Ні, скасувати</button>
+            <button onclick="closeConfirm(true)" class="flex-1 bg-red-600 hover:bg-red-500 text-white py-3 rounded-xl font-bold transition">Так</button>
+        </div>
+    </div>
 </div>
 
-<div class="grid md:grid-cols-3 gap-10">
+<div class="p-5 md:p-10 max-w-7xl mx-auto">
+    <!-- Header & Tabs -->
+    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 border-b border-zinc-800 pb-5 gap-4">
+        <h1 class="text-3xl font-bold">Панель керування</h1>
+        <div class="flex bg-zinc-900 rounded-xl p-1 border border-zinc-800">
+            <button onclick="switchTab('products')" id="tab-btn-products" class="px-6 py-2 rounded-lg font-bold bg-zinc-800 text-white transition">Товари</button>
+            <button onclick="switchTab('orders')" id="tab-btn-orders" class="px-6 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Замовлення</button>
+        </div>
+        <a href="/logout" class="bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 px-6 py-2 rounded-xl text-sm transition font-bold">Вийти</a>
+    </div>
 
-    <!-- Ліва колонка: Товари та категорії -->
-    <div class="md:col-span-1 space-y-8">
-        
-        <!-- Категорії -->
-        <div class="bg-zinc-900 p-6 rounded-2xl">
-            <h2 class="text-2xl font-bold mb-4">Категорії</h2>
-            <div class="flex gap-2 mb-4">
-                <input id="catName" placeholder="Нова категорія" class="w-full p-3 rounded-lg bg-zinc-800 border border-zinc-700 outline-none focus:border-zinc-500">
-                <button onclick="addCategory()" class="bg-blue-600 px-4 rounded-lg font-bold hover:bg-blue-500 transition">Додати</button>
+    <!-- Вкладка: Товари -->
+    <div id="tab-products" class="grid md:grid-cols-3 gap-10">
+        <div class="md:col-span-1 space-y-8">
+            <div class="bg-zinc-900 p-6 rounded-2xl border border-zinc-800">
+                <h2 class="text-2xl font-bold mb-4">Категорії</h2>
+                <div class="flex gap-2 mb-4">
+                    <input id="catName" placeholder="Нова категорія" class="w-full p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none">
+                    <button onclick="addCategory()" class="bg-blue-600 px-5 rounded-xl font-bold hover:bg-blue-500 transition">Додати</button>
+                </div>
+                <div id="categoriesList" class="space-y-2"></div>
             </div>
-            <div id="categoriesList" class="space-y-2"></div>
+
+            <div class="bg-zinc-900 p-6 rounded-2xl border border-zinc-800">
+                <h2 class="text-2xl font-bold mb-4">Додати товар</h2>
+                <input id="name" placeholder="Назва" class="w-full mb-3 p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none">
+                <textarea id="description" placeholder="Опис" class="w-full mb-3 p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none"></textarea>
+                <input id="price" type="number" placeholder="Ціна" class="w-full mb-3 p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none">
+                <select id="category" class="w-full mb-3 p-3 rounded-xl bg-zinc-800 border border-zinc-700 outline-none"></select>
+                <label class="block text-sm text-zinc-400 mb-1">Фото товару</label>
+                <input id="image" type="file" accept="image/*" class="w-full mb-5 p-2 rounded-xl bg-zinc-800 border border-zinc-700">
+                <button onclick="addMenu()" class="bg-green-600 hover:bg-green-500 w-full py-4 rounded-xl font-bold transition shadow-lg">Додати в меню</button>
+            </div>
         </div>
 
-        <!-- Додавання товару -->
-        <div class="bg-zinc-900 p-6 rounded-2xl">
-            <h2 class="text-2xl font-bold mb-4">Додати товар</h2>
-            <input id="name" placeholder="Назва" class="w-full mb-3 p-3 rounded-lg bg-zinc-800 border border-zinc-700 outline-none">
-            <textarea id="description" placeholder="Опис" class="w-full mb-3 p-3 rounded-lg bg-zinc-800 border border-zinc-700 outline-none"></textarea>
-            <input id="price" type="number" placeholder="Ціна" class="w-full mb-3 p-3 rounded-lg bg-zinc-800 border border-zinc-700 outline-none">
-            
-            <select id="category" class="w-full mb-3 p-3 rounded-lg bg-zinc-800 border border-zinc-700 outline-none">
-                <!-- Заповнюється через JS -->
-            </select>
-            
-            <label class="block text-sm text-zinc-400 mb-1">Фото товару</label>
-            <input id="image" type="file" accept="image/*" class="w-full mb-5 p-2 rounded-lg bg-zinc-800 border border-zinc-700">
-
-            <button onclick="addMenu()" class="bg-green-600 hover:bg-green-500 w-full py-3 rounded-lg font-bold transition">Додати в меню</button>
+        <div class="md:col-span-2">
+            <h2 class="text-2xl font-bold mb-5">Список меню</h2>
+            <div id="products" class="grid md:grid-cols-2 gap-4"></div>
         </div>
-
     </div>
 
-    <!-- Середня колонка: Список товарів -->
-    <div class="md:col-span-1">
-        <h2 class="text-2xl font-bold mb-5">Меню</h2>
-        <div id="products" class="space-y-4"></div>
-    </div>
-
-    <!-- Права колонка: Замовлення -->
-    <div class="md:col-span-1">
-        <h2 class="text-2xl font-bold mb-5 flex justify-between items-center">
-            Активні замовлення
-        </h2>
-        <div id="orders" class="space-y-4"></div>
+    <!-- Вкладка: Замовлення -->
+    <div id="tab-orders" class="hidden">
+        <h2 class="text-2xl font-bold mb-5">Активні замовлення</h2>
+        <div id="orders" class="grid md:grid-cols-2 gap-6"></div>
     </div>
 
 </div>
@@ -68,14 +78,54 @@
 const socket = io();
 let MENU = [];
 let CATEGORIES = [];
+let confirmCallback = null;
 
+// UI Helpers
+function showToast(msg, type = 'success') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    const color = type === 'success' ? 'bg-green-600' : 'bg-red-600';
+    toast.className = `${color} text-white px-6 py-3 rounded-xl shadow-lg transform transition-all duration-300 translate-y-5 opacity-0 font-bold`;
+    toast.innerText = msg;
+    container.appendChild(toast);
+    
+    requestAnimationFrame(() => {
+        toast.classList.remove('translate-y-5', 'opacity-0');
+    });
+    
+    setTimeout(() => {
+        toast.classList.add('opacity-0', '-translate-y-5');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+function openConfirm(text, callback) {
+    document.getElementById('confirm-text').innerText = text;
+    document.getElementById('confirm-modal').classList.remove('hidden');
+    confirmCallback = callback;
+}
+
+function closeConfirm(result) {
+    document.getElementById('confirm-modal').classList.add('hidden');
+    if(result && confirmCallback) confirmCallback();
+    confirmCallback = null;
+}
+
+function switchTab(tab) {
+    document.getElementById('tab-products').classList.add('hidden');
+    document.getElementById('tab-orders').classList.add('hidden');
+    document.getElementById('tab-btn-products').className = "px-6 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition";
+    document.getElementById('tab-btn-orders').className = "px-6 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition";
+
+    document.getElementById(`tab-${tab}`).classList.remove('hidden');
+    document.getElementById(`tab-btn-${tab}`).className = "px-6 py-2 rounded-lg font-bold bg-zinc-800 text-white transition";
+}
+
+// Data fetching
 async function loadData() {
     const [menuRes, catRes, ordersRes] = await Promise.all([
-        fetch("/api/menu"),
-        fetch("/api/categories"),
-        fetch("/api/orders")
+        fetch("/api/menu"), fetch("/api/categories"), fetch("/api/orders")
     ]);
-    
     MENU = await menuRes.json();
     CATEGORIES = await catRes.json();
     const orders = await ordersRes.json();
@@ -85,7 +135,7 @@ async function loadData() {
     renderOrders(orders);
 }
 
-// === КАТЕГОРІЇ ===
+// Categories
 function renderCategories() {
     const list = document.getElementById("categoriesList");
     const select = document.getElementById("category");
@@ -94,11 +144,11 @@ function renderCategories() {
 
     CATEGORIES.forEach(cat => {
         list.innerHTML += `
-            <div class="flex justify-between items-center bg-zinc-800 p-3 rounded-lg border border-zinc-700">
-                <span>${cat.name}</span>
-                <div class="flex gap-2 text-sm">
-                    <button onclick="editCategory(${cat.id}, '${cat.name}')" class="text-zinc-400 hover:text-white">Ред.</button>
-                    <button onclick="deleteCategory(${cat.id})" class="text-red-400 hover:text-red-300">Вид.</button>
+            <div class="flex justify-between items-center bg-zinc-800 p-3 rounded-xl border border-zinc-700">
+                <span class="font-bold">${cat.name}</span>
+                <div class="flex gap-3 text-sm font-bold">
+                    <button onclick="editCategory(${cat.id}, '${cat.name}')" class="text-blue-400 hover:text-blue-300">Ред.</button>
+                    <button onclick="deleteCategory(${cat.id})" class="text-red-400 hover:text-red-300">Видалити</button>
                 </div>
             </div>
         `;
@@ -108,49 +158,47 @@ function renderCategories() {
 
 async function addCategory() {
     const input = document.getElementById("catName");
-    if(!input.value.trim()) return;
+    if(!input.value.trim()) return showToast("Введіть назву категорії", "error");
     await fetch("/api/category/add", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({name: input.value})
     });
     input.value = "";
+    showToast("Категорію додано");
     loadData();
 }
 
-async function deleteCategory(id) {
-    if(!confirm("Точно видалити категорію?")) return;
-    await fetch("/api/category/delete/" + id, {method: "POST"});
-    loadData();
+function deleteCategory(id) {
+    openConfirm("Точно видалити категорію?", async () => {
+        await fetch("/api/category/delete/" + id, {method: "POST"});
+        showToast("Категорію видалено");
+        loadData();
+    });
 }
 
-async function editCategory(id, oldName) {
+function editCategory(id, oldName) {
     const newName = prompt("Нова назва категорії", oldName);
     if(!newName || newName === oldName) return;
-    await fetch("/api/category/edit/" + id, {
+    fetch("/api/category/edit/" + id, {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({name: newName})
-    });
-    loadData();
+    }).then(() => { showToast("Збережено"); loadData(); });
 }
 
-// === МЕНЮ ===
+// Menu
 function renderMenu() {
     const products = document.getElementById("products");
     products.innerHTML = "";
     MENU.forEach(item => {
         products.innerHTML += `
-        <div class="bg-zinc-900 p-4 rounded-xl border border-zinc-800 flex flex-col">
-            <div class="flex gap-4">
-                <img src="/static/images/${item.image}" class="w-24 h-24 rounded-lg object-cover bg-zinc-800" onerror="this.src='https://via.placeholder.com/150/3f3f46/ffffff?text=No+Photo'">
-                <div class="flex-1">
-                    <div class="text-xs text-zinc-500 uppercase tracking-wider mb-1">${item.category}</div>
-                    <h3 class="text-lg font-bold">${item.name}</h3>
-                    <div class="text-green-400 font-bold text-lg mt-1">${item.price} ₴</div>
-                </div>
+        <div class="bg-zinc-900 p-5 rounded-2xl border border-zinc-800 flex gap-4 items-center">
+            <img src="/static/images/${item.image}" class="w-20 h-20 rounded-xl object-cover bg-zinc-800">
+            <div class="flex-1">
+                <div class="text-xs text-zinc-500 uppercase tracking-wider mb-1 font-bold">${item.category}</div>
+                <h3 class="text-lg font-bold">${item.name}</h3>
+                <div class="text-green-400 font-bold text-lg">${item.price} ₴</div>
             </div>
-            <div class="flex gap-2 mt-4">
-                <button onclick="deleteProduct(${item.id})" class="flex-1 bg-red-900/50 hover:bg-red-800 text-red-200 py-2 rounded-lg text-sm transition">Видалити</button>
-            </div>
+            <button onclick="deleteProduct(${item.id})" class="bg-red-900/50 hover:bg-red-800 text-red-200 px-4 py-2 rounded-xl transition font-bold">Видалити</button>
         </div>
         `;
     });
@@ -163,7 +211,7 @@ async function addMenu() {
     const cat = document.getElementById("category").value;
     const file = document.getElementById("image").files[0];
 
-    if(!name || !price || !cat) return alert("Заповніть назву, ціну та категорію!");
+    if(!name || !price || !cat) return showToast("Заповніть назву, ціну та категорію!", "error");
 
     const formData = new FormData();
     formData.append("name", name);
@@ -178,57 +226,57 @@ async function addMenu() {
     document.getElementById("description").value = "";
     document.getElementById("price").value = "";
     document.getElementById("image").value = "";
+    showToast("Товар додано в меню!");
     loadData();
 }
 
-async function deleteProduct(id) {
-    if(!confirm("Точно видалити товар?")) return;
-    await fetch("/api/menu/delete/" + id, {method: "POST"});
-    loadData();
+function deleteProduct(id) {
+    openConfirm("Точно видалити товар?", async () => {
+        await fetch("/api/menu/delete/" + id, {method: "POST"});
+        showToast("Товар видалено");
+        loadData();
+    });
 }
 
-// === ЗАМОВЛЕННЯ ===
+// Orders
 function renderOrders(orders) {
     const ordersDiv = document.getElementById("orders");
     if(orders.length === 0) {
-        ordersDiv.innerHTML = `<div class="bg-zinc-900 p-8 rounded-xl text-center text-zinc-500">Немає активних замовлень</div>`;
+        ordersDiv.innerHTML = `<div class="bg-zinc-900 p-8 rounded-2xl border border-zinc-800 text-center text-zinc-500 col-span-full font-bold">Немає активних замовлень</div>`;
         return;
     }
 
     ordersDiv.innerHTML = "";
     orders.reverse().forEach(order => {
         let itemsHtml = order.items.map(item => `
-            <div class="flex justify-between items-center py-2 border-b border-zinc-800/50 last:border-0">
+            <div class="flex justify-between items-center py-3 border-b border-zinc-800/50 last:border-0">
                 <div class="flex flex-col">
-                    <span class="${item.status === 'Готово' ? 'text-zinc-500 line-through' : ''}">${item.name}</span>
-                    <span class="text-xs ${item.status === 'В черзі' ? 'text-yellow-500' : item.status === 'Скасовано' ? 'text-red-500' : 'text-green-500'}">${item.status}</span>
+                    <span class="font-bold ${item.status === 'Готово' ? 'text-zinc-500 line-through' : ''}">${item.name}</span>
+                    <span class="text-xs font-bold ${item.status === 'В черзі' ? 'text-yellow-500' : item.status === 'Відхилено' ? 'text-red-500' : 'text-green-500'}">${item.status}</span>
                 </div>
                 ${item.status === 'В черзі' ? `
                 <div class="flex gap-2">
-                    <button onclick="setItemStatus(${order.id}, '${item.uid}', 'Готово')" class="bg-zinc-800 text-green-400 px-3 py-1 rounded text-sm hover:bg-zinc-700">✓ Готово</button>
-                    <button onclick="setItemStatus(${order.id}, '${item.uid}', 'Скасовано')" class="bg-zinc-800 text-red-400 px-3 py-1 rounded text-sm hover:bg-zinc-700">✕ Відмінити</button>
+                    <button onclick="setItemStatus(${order.id}, '${item.uid}', 'Готово')" class="bg-green-900/40 text-green-400 px-4 py-2 rounded-lg text-sm font-bold hover:bg-green-800 transition">Готово</button>
+                    <button onclick="setItemStatus(${order.id}, '${item.uid}', 'Відхилено')" class="bg-red-900/40 text-red-400 px-4 py-2 rounded-lg text-sm font-bold hover:bg-red-800 transition">Відхилити</button>
                 </div>
                 ` : ''}
             </div>
         `).join("");
 
         ordersDiv.innerHTML += `
-        <div class="bg-zinc-900 p-5 rounded-2xl border border-zinc-800">
-            <div class="flex justify-between items-center mb-4 border-b border-zinc-800 pb-3">
+        <div class="bg-zinc-900 p-6 rounded-2xl border border-zinc-800 shadow-lg relative overflow-hidden">
+            <div class="absolute top-0 left-0 w-2 h-full bg-blue-500"></div>
+            <div class="flex justify-between items-start mb-4 pb-4 border-b border-zinc-800 pl-4">
                 <div>
-                    <h3 class="text-xl font-bold text-white">Стіл #${order.table}</h3>
-                    <div class="text-xs text-zinc-500">Час: ${order.created}</div>
+                    <h3 class="text-2xl font-bold">Стіл #${order.table}</h3>
+                    <div class="text-sm text-zinc-500 font-semibold mt-1">Створено: ${order.created}</div>
                 </div>
-                <div class="text-green-400 font-bold text-xl">${order.total} ₴</div>
+                <div class="text-green-400 font-bold text-2xl">${order.total} ₴</div>
             </div>
-            
-            <div class="mb-5">
-                ${itemsHtml}
-            </div>
-
-            <div class="grid grid-cols-2 gap-3 pt-3 border-t border-zinc-800">
-                <button onclick="setAllStatus(${order.id}, 'Скасовано')" class="bg-red-900/30 text-red-400 py-2 rounded-lg text-sm hover:bg-red-900/50 transition">Скасувати все</button>
-                <button onclick="setAllStatus(${order.id}, 'Готово')" class="bg-green-900/30 text-green-400 py-2 rounded-lg text-sm hover:bg-green-900/50 transition">Готово все</button>
+            <div class="mb-6 pl-4">${itemsHtml}</div>
+            <div class="grid grid-cols-2 gap-4 pl-4 border-t border-zinc-800 pt-4">
+                <button onclick="setAllStatus(${order.id}, 'Відхилено')" class="bg-zinc-800 text-red-400 py-3 rounded-xl text-sm font-bold hover:bg-red-900/50 transition">Скасувати все</button>
+                <button onclick="setAllStatus(${order.id}, 'Готово')" class="bg-blue-600 text-white py-3 rounded-xl text-sm font-bold hover:bg-blue-500 transition shadow-lg">Готово все</button>
             </div>
         </div>
         `;
@@ -240,28 +288,22 @@ async function setItemStatus(orderId, itemUid, status) {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({ order_id: orderId, item_uid: itemUid, status: status })
     });
+    showToast(`Позицію позначено як "${status}"`);
 }
 
-async function setAllStatus(orderId, status) {
-    if(!confirm(`Точно позначити все як "${status}"?`)) return;
-    await fetch("/api/order/all_status", {
-        method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ order_id: orderId, status: status })
+function setAllStatus(orderId, status) {
+    openConfirm(`Точно позначити все замовлення як "${status}"?`, async () => {
+        await fetch("/api/order/all_status", {
+            method: "POST", headers: {"Content-Type": "application/json"},
+            body: JSON.stringify({ order_id: orderId, status: status })
+        });
+        showToast(`Замовлення ${status}`);
     });
 }
 
-socket.on("new_order", (order) => {
-    loadData();
-    // Опціонально можна додати звук
-});
-
-socket.on("order_updated", () => {
-    loadData();
-});
-
-socket.on("menu_updated", () => {
-    loadData();
-});
+socket.on("new_order", () => { showToast("Нове замовлення!"); loadData(); });
+socket.on("order_updated", () => loadData());
+socket.on("menu_updated", () => loadData());
 
 loadData();
 </script>
