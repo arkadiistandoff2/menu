@@ -1,26 +1,34 @@
 import os
 import json
+import uuid
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, redirect, session
 from flask_socketio import SocketIO
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
-# Використовуємо змінну оточення для безпеки, або дефолтний ключ
 app.secret_key = os.environ.get("SECRET_KEY", "softerx-default-key")
 
-# Важливо для Render: дозволяємо всі origin для сокетів
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
 DB = "db.json"
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "1111")
+UPLOAD_FOLDER = os.path.join("static", "images")
+app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# =========================
+# DATABASE
+# =========================
 
 def load_db():
     if not os.path.exists(DB):
         data = {
             "settings": {"tables": 5},
+            "categories": [{"id": 1, "name": "Основні страви"}, {"id": 2, "name": "Напої"}],
             "menu": [],
-            "orders": [],
-            "reviews": []
+            "orders": []
         }
         with open(DB, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4, ensure_ascii=False)
@@ -32,7 +40,9 @@ def save_db(data):
     with open(DB, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
-# --- ROUTES ---
+# =========================
+# ROUTES
+# =========================
 
 @app.route("/")
 def home():
@@ -78,7 +88,55 @@ def login():
     </html>
     """
 
-# --- API ---
+# =========================
+# CATEGORY API
+# =========================
+
+@app.route("/api/categories")
+def get_categories():
+    db = load_db()
+    return jsonify(db.get("categories", []))
+
+@app.route("/api/category/add", methods=["POST"])
+def add_category():
+    if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
+    db = load_db()
+    data = request.json
+    cat = {
+        "id": int(datetime.now().timestamp()),
+        "name": data["name"]
+    }
+    if "categories" not in db:
+        db["categories"] = []
+    db["categories"].append(cat)
+    save_db(db)
+    socketio.emit("menu_updated")
+    return jsonify({"success": True})
+
+@app.route("/api/category/delete/<int:cat_id>", methods=["POST"])
+def delete_category(cat_id):
+    if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
+    db = load_db()
+    db["categories"] = [x for x in db.get("categories", []) if x["id"] != cat_id]
+    save_db(db)
+    socketio.emit("menu_updated")
+    return jsonify({"success": True})
+
+@app.route("/api/category/edit/<int:cat_id>", methods=["POST"])
+def edit_category(cat_id):
+    if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
+    db = load_db()
+    data = request.json
+    for cat in db.get("categories", []):
+        if cat["id"] == cat_id:
+            cat["name"] = data["name"]
+    save_db(db)
+    socketio.emit("menu_updated")
+    return jsonify({"success": True})
+
+# =========================
+# MENU API
+# =========================
 
 @app.route("/api/menu")
 def get_menu():
@@ -89,15 +147,28 @@ def get_menu():
 def add_menu():
     if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
     db = load_db()
-    data = request.json
+    
+    name = request.form.get("name")
+    description = request.form.get("description")
+    price = request.form.get("price")
+    category = request.form.get("category")
+    image_file = request.files.get("image")
+    
+    image_name = ""
+    if image_file:
+        ext = image_file.filename.split('.')[-1]
+        image_name = f"{uuid.uuid4().hex}.{ext}"
+        image_file.save(os.path.join(app.config["UPLOAD_FOLDER"], image_name))
+
     item = {
         "id": int(datetime.now().timestamp()),
-        "name": data["name"],
-        "description": data["description"],
-        "price": data["price"],
-        "image": data["image"],
-        "category": data["category"]
+        "name": name,
+        "description": description,
+        "price": price,
+        "image": image_name,
+        "category": category
     }
+
     db["menu"].append(item)
     save_db(db)
     socketio.emit("menu_updated")
@@ -116,26 +187,57 @@ def delete_menu(item_id):
 def edit_menu(item_id):
     if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
     db = load_db()
-    data = request.json
+    
+    name = request.form.get("name")
+    description = request.form.get("description")
+    price = request.form.get("price")
+    category = request.form.get("category")
+    image_file = request.files.get("image")
+
     for item in db["menu"]:
         if item["id"] == item_id:
-            item.update(data)
+            item["name"] = name
+            item["description"] = description
+            item["price"] = price
+            item["category"] = category
+            if image_file:
+                ext = image_file.filename.split('.')[-1]
+                image_name = f"{uuid.uuid4().hex}.{ext}"
+                image_file.save(os.path.join(app.config["UPLOAD_FOLDER"], image_name))
+                item["image"] = image_name
+
     save_db(db)
     socketio.emit("menu_updated")
     return jsonify({"success": True})
+
+# =========================
+# ORDERS API
+# =========================
 
 @app.route("/api/order", methods=["POST"])
 def create_order():
     db = load_db()
     data = request.json
+    
+    # Додаємо унікальні ID для кожної замовленої позиції
+    items_with_ids = []
+    for i, item in enumerate(data["items"]):
+        items_with_ids.append({
+            "uid": f"{int(datetime.now().timestamp())}_{i}",
+            "name": item["name"],
+            "price": item["price"],
+            "status": "В черзі"
+        })
+
     order = {
         "id": int(datetime.now().timestamp()),
         "table": data["table"],
-        "items": data["items"],
+        "items": items_with_ids,
         "total": data["total"],
-        "status": "В черзі",
-        "created": str(datetime.now())
+        "status": "Активне", # Активне, Завершене
+        "created": str(datetime.now().strftime("%H:%M"))
     }
+
     db["orders"].append(order)
     save_db(db)
     socketio.emit("new_order", order)
@@ -145,21 +247,47 @@ def create_order():
 def get_orders():
     if not session.get("admin"): return jsonify([])
     db = load_db()
-    return jsonify(db["orders"])
+    # Повертаємо тільки активні замовлення для зручності
+    active_orders = [o for o in db["orders"] if o["status"] == "Активне"]
+    return jsonify(active_orders)
 
-@app.route("/api/order/status", methods=["POST"])
-def order_status():
+@app.route("/api/order/item_status", methods=["POST"])
+def update_item_status():
     if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
     db = load_db()
     data = request.json
+    
     for order in db["orders"]:
-        if order["id"] == data["id"]:
-            order["status"] = data["status"]
+        if order["id"] == data["order_id"]:
+            for item in order["items"]:
+                if item["uid"] == data["item_uid"]:
+                    item["status"] = data["status"]
+            
+            # Перевірка чи всі готові/скасовані
+            all_done = all(i["status"] in ["Готово", "Скасовано"] for i in order["items"])
+            if all_done:
+                order["status"] = "Завершене"
+
     save_db(db)
-    socketio.emit("order_updated", data)
+    socketio.emit("order_updated")
+    return jsonify({"success": True})
+
+@app.route("/api/order/all_status", methods=["POST"])
+def update_all_status():
+    if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
+    db = load_db()
+    data = request.json
+    
+    for order in db["orders"]:
+        if order["id"] == data["order_id"]:
+            for item in order["items"]:
+                item["status"] = data["status"]
+            order["status"] = "Завершене"
+
+    save_db(db)
+    socketio.emit("order_updated")
     return jsonify({"success": True})
 
 if __name__ == "__main__":
-    # Локальний запуск
     port = int(os.environ.get("PORT", 5000))
     socketio.run(app, host="0.0.0.0", port=port, debug=True)
