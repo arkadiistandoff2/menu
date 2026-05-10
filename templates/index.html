@@ -9,35 +9,45 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Inter', sans-serif; padding-bottom: 90px; }
-        /* Модальне вікно кошика */
-        #cart-modal { transition: transform 0.3s ease-in-out; }
-        .cart-hidden { transform: translateY(100%); }
-        .cart-visible { transform: translateY(0); }
+        .slide-modal { transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+        .modal-hidden { transform: translateY(100%); }
+        .modal-visible { transform: translateY(0); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
     </style>
 </head>
 <body class="bg-zinc-50 text-zinc-900">
 
-<!-- Хедер з категоріями -->
+<!-- Контейнер для Toasts -->
+<div id="toast-container" class="fixed top-5 left-1/2 transform -translate-x-1/2 z-[100] flex flex-col gap-3 pointer-events-none w-full max-w-sm px-4"></div>
+
+<!-- Кастомний запит на сповіщення -->
+<div id="notify-prompt" class="fixed top-20 left-1/2 transform -translate-x-1/2 w-[90%] max-w-md bg-zinc-900 text-white p-6 rounded-2xl shadow-2xl z-[90] hidden transition-all duration-300 translate-y-10 opacity-0">
+    <h3 class="text-xl font-bold mb-2">Хочете знати, коли буде готово?</h3>
+    <p class="text-zinc-400 text-sm mb-6">Увімкніть сповіщення, щоб отримати повідомлення, навіть якщо телефон заблоковано.</p>
+    <div class="flex gap-3">
+        <button onclick="closeNotifyPrompt()" class="flex-1 bg-zinc-800 py-3 rounded-xl font-bold text-sm">Не зараз</button>
+        <button onclick="enableNotifications()" class="flex-1 bg-blue-600 text-white py-3 rounded-xl font-bold text-sm shadow-lg">Дозволити</button>
+    </div>
+</div>
+
 <div class="sticky top-0 bg-white shadow-sm z-40 pb-2">
-    <div class="p-5 pb-2">
-        <h1 class="text-2xl font-bold">Меню. Стіл #{{ table_id }}</h1>
+    <div class="p-5 pb-2 flex justify-between items-center">
+        <h1 class="text-2xl font-bold">Стіл #{{ table_id }}</h1>
+        <button onclick="toggleMyOrders()" class="bg-zinc-100 text-zinc-900 font-bold px-4 py-2 rounded-full text-sm border border-zinc-200">
+            Мої замовлення
+        </button>
     </div>
-    <div id="category-filters" class="flex overflow-x-auto px-5 gap-3 no-scrollbar pb-2">
-        <!-- Категорії генеруються тут -->
-    </div>
+    <div id="category-filters" class="flex overflow-x-auto px-5 gap-3 no-scrollbar pb-2"></div>
 </div>
 
-<!-- Список товарів -->
 <div class="p-5">
-    <div id="menu" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        <!-- Товари генеруються тут -->
-    </div>
+    <div id="menu" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
 </div>
 
-<!-- Нижня панель (фіксована) -->
+<!-- Нижня панель -->
 <div class="fixed bottom-0 left-0 w-full bg-white border-t border-zinc-200 p-4 px-6 flex justify-between items-center z-50 shadow-[0_-10px_20px_rgba(0,0,0,0.05)]">
     <div>
-        <div class="text-sm text-zinc-500">Загальна сума</div>
+        <div class="text-sm text-zinc-500 font-semibold">До сплати</div>
         <div class="text-xl font-bold text-green-600"><span id="bar-total">0</span> ₴</div>
     </div>
     <button onclick="toggleCart()" class="bg-zinc-900 text-white px-8 py-3 rounded-full font-bold shadow-lg flex gap-2 items-center active:scale-95 transition">
@@ -45,25 +55,32 @@
     </button>
 </div>
 
-<!-- Модальне вікно кошика -->
-<div id="cart-modal" class="fixed inset-0 bg-white z-[60] cart-hidden flex flex-col">
-    <div class="p-5 border-b border-zinc-100 flex justify-between items-center bg-white">
+<!-- Модалка: Кошик -->
+<div id="cart-modal" class="fixed inset-0 bg-white z-[60] slide-modal modal-hidden flex flex-col">
+    <div class="p-5 border-b border-zinc-100 flex justify-between items-center bg-white shadow-sm">
         <h2 class="text-2xl font-bold">Ваш кошик</h2>
-        <button onclick="toggleCart()" class="p-2 bg-zinc-100 rounded-full text-zinc-500 hover:bg-zinc-200">✕</button>
+        <button onclick="toggleCart()" class="p-2 bg-zinc-100 rounded-full text-zinc-500 hover:bg-zinc-200 font-bold w-10 h-10 flex items-center justify-center">✕</button>
     </div>
-    
-    <div id="cart-items" class="flex-1 overflow-y-auto p-5 bg-zinc-50">
-        <!-- Товари в кошику -->
-    </div>
-    
-    <div class="p-5 bg-white border-t border-zinc-100 pb-10">
+    <div id="cart-items" class="flex-1 overflow-y-auto p-5 bg-zinc-50"></div>
+    <div class="p-6 bg-white border-t border-zinc-100 pb-10 shadow-[0_-10px_20px_rgba(0,0,0,0.02)]">
         <div class="flex justify-between items-center mb-5">
-            <span class="text-lg text-zinc-500">До сплати:</span>
+            <span class="text-lg text-zinc-500 font-bold">Сума:</span>
             <span class="text-2xl font-bold text-green-600"><span id="modal-total">0</span> ₴</span>
         </div>
-        <button onclick="sendOrder()" class="w-full bg-green-500 text-white py-4 rounded-2xl text-lg font-bold active:scale-95 transition shadow-lg">
+        <button id="btn-checkout" onclick="sendOrder()" class="w-full bg-green-500 text-white py-4 rounded-2xl text-lg font-bold active:scale-95 transition shadow-lg">
             Оформити замовлення
         </button>
+    </div>
+</div>
+
+<!-- Модалка: Мої замовлення -->
+<div id="orders-modal" class="fixed inset-0 bg-zinc-50 z-[60] slide-modal modal-hidden flex flex-col">
+    <div class="p-5 border-b border-zinc-200 flex justify-between items-center bg-white shadow-sm">
+        <h2 class="text-2xl font-bold">Мої замовлення</h2>
+        <button onclick="toggleMyOrders()" class="p-2 bg-zinc-100 rounded-full text-zinc-500 hover:bg-zinc-200 font-bold w-10 h-10 flex items-center justify-center">✕</button>
+    </div>
+    <div id="my-orders-list" class="flex-1 overflow-y-auto p-5">
+        <!-- Заповнюється через JS -->
     </div>
 </div>
 
@@ -76,59 +93,69 @@ let CATEGORIES = [];
 let cart = [];
 let activeCategory = 'all';
 
+// Зберігаємо ID замовлень в пам'яті браузера
+let myTrackedOrders = JSON.parse(localStorage.getItem('myOrders')) || [];
+
+function showToast(msg, type = 'success') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    const bg = type === 'success' ? 'bg-green-600' : 'bg-zinc-900';
+    toast.className = `${bg} text-white px-6 py-4 rounded-2xl shadow-xl transform transition-all duration-300 -translate-y-10 opacity-0 font-bold text-center w-full`;
+    toast.innerText = msg;
+    container.appendChild(toast);
+    
+    requestAnimationFrame(() => toast.classList.remove('-translate-y-10', 'opacity-0'));
+    
+    setTimeout(() => {
+        toast.classList.add('opacity-0', '-translate-y-10');
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}
+
 async function loadData() {
-    const [menuRes, catRes] = await Promise.all([
-        fetch("/api/menu"),
-        fetch("/api/categories")
-    ]);
+    const [menuRes, catRes] = await Promise.all([ fetch("/api/menu"), fetch("/api/categories") ]);
     MENU = await menuRes.json();
     CATEGORIES = await catRes.json();
-    
     renderCategories();
     renderMenu();
 }
 
 function renderCategories() {
     const filters = document.getElementById("category-filters");
-    filters.innerHTML = `<button onclick="setCategory('all')" class="whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold transition ${activeCategory === 'all' ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600'}">Всі</button>`;
+    filters.innerHTML = `<button onclick="setCategory('all')" class="whitespace-nowrap px-5 py-2 rounded-full text-sm font-bold transition ${activeCategory === 'all' ? 'bg-zinc-900 text-white' : 'bg-white border border-zinc-200 text-zinc-600'}">Всі</button>`;
     
     CATEGORIES.forEach(cat => {
         const isActive = activeCategory === cat.name;
-        filters.innerHTML += `<button onclick="setCategory('${cat.name}')" class="whitespace-nowrap px-4 py-2 rounded-full text-sm font-semibold transition ${isActive ? 'bg-zinc-900 text-white' : 'bg-zinc-100 text-zinc-600'}">${cat.name}</button>`;
+        filters.innerHTML += `<button onclick="setCategory('${cat.name}')" class="whitespace-nowrap px-5 py-2 rounded-full text-sm font-bold transition ${isActive ? 'bg-zinc-900 text-white' : 'bg-white border border-zinc-200 text-zinc-600'}">${cat.name}</button>`;
     });
 }
 
-function setCategory(name) {
-    activeCategory = name;
-    renderCategories();
-    renderMenu();
-}
+function setCategory(name) { activeCategory = name; renderCategories(); renderMenu(); }
 
 function renderMenu() {
     const menuDiv = document.getElementById("menu");
     menuDiv.innerHTML = "";
-    
     const filteredMenu = activeCategory === 'all' ? MENU : MENU.filter(m => m.category === activeCategory);
 
     if (filteredMenu.length === 0) {
-        menuDiv.innerHTML = `<div class="text-center text-zinc-400 py-10 w-full col-span-full">У цій категорії поки пусто</div>`;
+        menuDiv.innerHTML = `<div class="text-center text-zinc-400 py-10 font-bold col-span-full">У цій категорії пусто</div>`;
         return;
     }
 
     filteredMenu.forEach(item => {
         menuDiv.innerHTML += `
-        <div class="bg-white rounded-2xl shadow-sm border border-zinc-100 overflow-hidden flex flex-col">
-            <div class="h-48 w-full bg-zinc-200">
+        <div class="bg-white rounded-3xl shadow-sm border border-zinc-100 overflow-hidden flex flex-col relative pb-4">
+            <div class="h-48 w-full bg-zinc-100 relative">
                 <img src="/static/images/${item.image}" class="w-full h-full object-cover" onerror="this.src='https://via.placeholder.com/400x300/e4e4e7/a1a1aa?text=No+Photo'">
-            </div>
-            <div class="p-5 flex-1 flex flex-col">
-                <div class="flex justify-between items-start mb-2">
-                    <h2 class="text-lg font-bold leading-tight pr-2">${item.name}</h2>
-                    <div class="text-green-600 font-bold whitespace-nowrap">${item.price} ₴</div>
+                <div class="absolute bottom-3 right-3 bg-white/90 backdrop-blur text-zinc-900 px-4 py-1.5 rounded-full font-bold shadow-sm border border-zinc-100/50">
+                    ${item.price} ₴
                 </div>
+            </div>
+            <div class="px-5 pt-4 flex-1 flex flex-col">
+                <h2 class="text-xl font-bold leading-tight mb-2 text-zinc-900">${item.name}</h2>
                 <p class="text-sm text-zinc-500 mb-4 flex-1 line-clamp-2">${item.description}</p>
-                <button onclick='addToCart(${JSON.stringify(item)})' class="w-full bg-zinc-100 text-zinc-900 font-bold py-3 rounded-xl active:bg-zinc-200 transition">
-                    Додати
+                <button onclick='addToCart(${JSON.stringify(item)})' class="w-full bg-zinc-100 hover:bg-zinc-200 text-zinc-900 font-bold py-3.5 rounded-xl active:scale-95 transition">
+                    Додати в кошик
                 </button>
             </div>
         </div>
@@ -139,6 +166,7 @@ function renderMenu() {
 function addToCart(item) {
     cart.push(item);
     updateCartUI();
+    showToast(`"${item.name}" додано`, 'success');
 }
 
 function removeFromCart(index) {
@@ -149,79 +177,151 @@ function removeFromCart(index) {
 
 function updateCartUI() {
     let total = cart.reduce((sum, item) => sum + Number(item.price), 0);
-    
-    // Оновлення нижньої панелі
     document.getElementById("bar-total").innerText = total;
     document.getElementById("bar-count").innerText = cart.length;
-    
-    // Оновлення модалки
     document.getElementById("modal-total").innerText = total;
     
     const cartItems = document.getElementById("cart-items");
     if(cart.length === 0) {
-        cartItems.innerHTML = `<div class="text-center text-zinc-400 mt-10">Кошик порожній</div>`;
+        cartItems.innerHTML = `<div class="text-center text-zinc-400 mt-10 font-bold">Кошик порожній</div>`;
     } else {
         cartItems.innerHTML = cart.map((item, index) => `
             <div class="bg-white p-4 rounded-2xl mb-3 shadow-sm border border-zinc-100 flex justify-between items-center">
                 <div>
                     <div class="font-bold text-zinc-900">${item.name}</div>
-                    <div class="text-sm text-zinc-500">${item.price} ₴</div>
+                    <div class="text-sm font-bold text-green-600 mt-1">${item.price} ₴</div>
                 </div>
-                <button onclick="removeFromCart(${index})" class="w-8 h-8 flex justify-center items-center rounded-full bg-red-50 text-red-500 active:bg-red-100 transition">✕</button>
+                <button onclick="removeFromCart(${index})" class="w-10 h-10 flex justify-center items-center rounded-xl bg-red-50 text-red-500 active:bg-red-100 transition font-bold">✕</button>
             </div>
         `).join("");
     }
 }
 
 function toggleCart() {
-    if(cart.length === 0 && document.getElementById('cart-modal').classList.contains('cart-hidden')) {
-        alert("Кошик порожній");
-        return;
+    if(cart.length === 0 && document.getElementById('cart-modal').classList.contains('modal-hidden')) return showToast("Спочатку додайте товари", "info");
+    document.getElementById("cart-modal").classList.toggle("modal-hidden");
+    document.getElementById("cart-modal").classList.toggle("modal-visible");
+}
+
+function toggleMyOrders() {
+    const modal = document.getElementById("orders-modal");
+    if (modal.classList.contains("modal-hidden")) {
+        loadMyOrders(); // Завантажуємо свіжі дані перед показом
     }
-    const modal = document.getElementById("cart-modal");
-    if(modal.classList.contains("cart-hidden")) {
-        modal.classList.remove("cart-hidden");
-        modal.classList.add("cart-visible");
-    } else {
-        modal.classList.remove("cart-visible");
-        modal.classList.add("cart-hidden");
-    }
+    modal.classList.toggle("modal-hidden");
+    modal.classList.toggle("modal-visible");
 }
 
 async function sendOrder() {
     if(cart.length === 0) return;
-
     let total = cart.reduce((sum, item) => sum + Number(item.price), 0);
 
-    const btn = event.target;
-    btn.innerText = "Відправка...";
-    btn.disabled = true;
+    const btn = document.getElementById("btn-checkout");
+    btn.innerText = "Відправка..."; btn.disabled = true;
 
-    await fetch("/api/order", {
+    const res = await fetch("/api/order", {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-            table: TABLE_ID,
-            items: cart,
-            total: total
-        })
+        body: JSON.stringify({ table: TABLE_ID, items: cart, total: total })
     });
+    const data = await res.json();
+    
+    // Зберігаємо ID замовлення щоб потім трекати
+    myTrackedOrders.push(data.order_id);
+    localStorage.setItem('myOrders', JSON.stringify(myTrackedOrders));
 
     cart = [];
     updateCartUI();
     toggleCart();
     
-    btn.innerText = "Оформити замовлення";
-    btn.disabled = false;
-    alert("Замовлення успішно створено! Очікуйте.");
+    btn.innerText = "Оформити замовлення"; btn.disabled = false;
+    showToast("Замовлення відправлено на кухню!");
+    
+    // Пропонуємо увімкнути сповіщення (якщо ще не дозволено)
+    if ("Notification" in window && Notification.permission === "default") {
+        setTimeout(showNotifyPrompt, 1500);
+    }
 }
 
+// === Система відстеження та сповіщень ===
+
+async function loadMyOrders() {
+    const list = document.getElementById("my-orders-list");
+    if(myTrackedOrders.length === 0) {
+        list.innerHTML = `<div class="text-center text-zinc-400 mt-10 font-bold">У вас ще немає замовлень</div>`;
+        return;
+    }
+
+    const res = await fetch("/api/client_orders", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ ids: myTrackedOrders })
+    });
+    const orders = await res.json();
+
+    if(orders.length === 0) {
+        list.innerHTML = `<div class="text-center text-zinc-400 mt-10 font-bold">Всі замовлення завершені</div>`;
+        return;
+    }
+
+    list.innerHTML = orders.reverse().map(order => `
+        <div class="bg-white p-5 rounded-3xl mb-4 shadow-sm border border-zinc-200">
+            <div class="flex justify-between items-center mb-3 border-b border-zinc-100 pb-3">
+                <div class="font-bold text-zinc-500">Чек #${order.id.toString().slice(-4)}</div>
+                <div class="font-bold px-3 py-1 bg-zinc-100 rounded-full text-xs">${order.status}</div>
+            </div>
+            <div class="space-y-2 mb-4">
+                ${order.items.map(i => `
+                    <div class="flex justify-between text-sm">
+                        <span class="font-bold ${i.status === 'Готово' ? 'text-zinc-400' : 'text-zinc-900'}">${i.name}</span>
+                        <span class="font-bold ${i.status === 'Готово' ? 'text-green-500' : i.status === 'Відхилено' ? 'text-red-500' : 'text-yellow-500'}">${i.status}</span>
+                    </div>
+                `).join("")}
+            </div>
+        </div>
+    `).join("");
+}
+
+function showNotifyPrompt() {
+    const prompt = document.getElementById('notify-prompt');
+    prompt.classList.remove('hidden');
+    requestAnimationFrame(() => prompt.classList.remove('translate-y-10', 'opacity-0'));
+}
+
+function closeNotifyPrompt() {
+    const prompt = document.getElementById('notify-prompt');
+    prompt.classList.add('translate-y-10', 'opacity-0');
+    setTimeout(() => prompt.classList.add('hidden'), 300);
+}
+
+function enableNotifications() {
+    Notification.requestPermission().then(permission => {
+        closeNotifyPrompt();
+        if (permission === "granted") showToast("Супер! Ми сповістимо вас.");
+    });
+}
+
+// Сокети
 socket.on("menu_updated", () => loadData());
-socket.on("order_updated", () => {
-    // Сповіщення клієнта про зміну статусу можна додати тут
+
+socket.on("notify_client", (data) => {
+    // Перевіряємо чи це замовлення належить цьому клієнту
+    if (myTrackedOrders.includes(data.order_id)) {
+        
+        // Оновлюємо список якщо модалка відкрита
+        if (!document.getElementById("orders-modal").classList.contains("modal-hidden")) {
+            loadMyOrders();
+        }
+
+        // Візуальне повідомлення в браузері (Toast)
+        showToast(data.body, 'info');
+
+        // Пуш-сповіщення системи телефону/ПЗ
+        if ("Notification" in window && Notification.permission === "granted") {
+            new Notification(data.title, { body: data.body, icon: "/static/images/icon.png" }); // icon опціонально
+        }
+    }
 });
 
 loadData();
-updateCartUI();
 </script>
 
 </body>
