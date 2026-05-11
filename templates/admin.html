@@ -13,66 +13,63 @@
 
 <div id="toast-container" class="fixed top-5 right-5 z-[100] flex flex-col gap-3 pointer-events-none"></div>
 
+<div id="device-modal" class="fixed inset-0 bg-black/80 z-[150] hidden flex items-center justify-center p-4 backdrop-blur-md">
+    <div class="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl w-full max-w-md">
+        <h2 class="text-2xl font-bold mb-4">Деталі пристрою</h2>
+        <div id="device-info-content" class="space-y-3 text-sm text-zinc-400 mb-8"></div>
+        <div class="flex flex-col gap-3">
+            <button onclick="promptNotif()" class="bg-blue-600 py-3 rounded-xl font-bold">Надіслати сповіщення</button>
+            <button onclick="document.getElementById('device-modal').classList.add('hidden')" class="text-zinc-500 font-bold py-2">Закрити</button>
+        </div>
+    </div>
+</div>
+
 <div class="p-5 md:p-10 max-w-7xl mx-auto">
     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 border-b border-zinc-800 pb-5 gap-4">
-        <h1 class="text-3xl font-bold">Панель керування</h1>
+        <h1 class="text-3xl font-bold">Керування</h1>
         <div class="flex flex-wrap gap-2 bg-zinc-900 rounded-xl p-1 border border-zinc-800">
             <button onclick="switchTab('products')" id="tab-btn-products" class="px-4 py-2 rounded-lg font-bold bg-zinc-800 text-white transition">Товари</button>
             <button onclick="switchTab('orders')" id="tab-btn-orders" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Замовлення</button>
             <button onclick="switchTab('reviews')" id="tab-btn-reviews" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Відгуки</button>
-            <button onclick="switchTab('carts')" id="tab-btn-carts" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Кошики</button>
+            <button onclick="switchTab('carts')" id="tab-btn-carts" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Пристрої</button>
         </div>
         <div class="flex gap-2">
-            <button onclick="document.getElementById('import-file').click()" class="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm font-bold">⬇️ Імпорт</button>
-            <input type="file" id="import-file" class="hidden" accept=".json" onchange="importData(event)">
-            <a href="/api/export" class="bg-zinc-800 hover:bg-zinc-700 px-4 py-2 rounded-xl text-sm font-bold">⬆️ Експорт</a>
-            <a href="/logout" class="bg-red-900/50 hover:bg-red-800 px-4 py-2 rounded-xl text-sm font-bold">Вийти</a>
+            <a href="/logout" class="bg-red-900/30 hover:bg-red-800 px-4 py-2 rounded-xl text-sm font-bold text-red-400">Вийти</a>
         </div>
     </div>
 
     <div id="tab-products" class="grid md:grid-cols-3 gap-10">
-        <div class="md:col-span-1 space-y-8">
+        <div class="md:col-span-1 space-y-6">
             <div class="bg-zinc-900 p-6 rounded-2xl border border-zinc-800">
-                <h2 class="text-2xl font-bold mb-4">Додати товар</h2>
+                <h2 class="text-xl font-bold mb-4">Новий товар</h2>
                 <input id="name" placeholder="Назва" class="w-full mb-3 p-3 rounded-xl bg-zinc-800 outline-none">
+                <textarea id="desc" placeholder="Опис" class="w-full mb-3 p-3 rounded-xl bg-zinc-800 outline-none h-24"></textarea>
                 <input id="price" type="number" placeholder="Ціна" class="w-full mb-3 p-3 rounded-xl bg-zinc-800 outline-none">
                 <select id="category" class="w-full mb-3 p-3 rounded-xl bg-zinc-800 outline-none"></select>
-                <input id="image" type="file" class="w-full mb-5 p-2 rounded-xl bg-zinc-800">
-                <button onclick="addMenu()" class="bg-green-600 hover:bg-green-500 w-full py-3 rounded-xl font-bold">Додати</button>
+                <input id="image" type="file" class="w-full mb-5 p-2 rounded-xl bg-zinc-800 text-xs">
+                <button onclick="addMenu()" class="bg-green-600 hover:bg-green-500 w-full py-3 rounded-xl font-bold transition">Додати</button>
             </div>
             <div class="bg-zinc-900 p-6 rounded-2xl border border-zinc-800">
-                <input id="catName" placeholder="Нова категорія" class="w-full p-3 rounded-xl bg-zinc-800 mb-2 outline-none">
-                <button onclick="addCategory()" class="bg-blue-600 w-full py-2 rounded-xl font-bold">Додати категорію</button>
+                <input id="catName" placeholder="Назва категорії" class="w-full p-3 rounded-xl bg-zinc-800 mb-2 outline-none">
+                <button onclick="addCategory()" class="bg-blue-600 w-full py-2 rounded-xl font-bold">Створити категорію</button>
                 <div id="categoriesList" class="space-y-2 mt-4"></div>
             </div>
         </div>
-        <div class="md:col-span-2">
-            <div id="products" class="grid md:grid-cols-2 gap-4"></div>
-        </div>
+        <div class="md:col-span-2"><div id="products" class="grid md:grid-cols-2 gap-4"></div></div>
     </div>
 
-    <div id="tab-orders" class="hidden">
-        <div id="orders" class="grid md:grid-cols-2 gap-6"></div>
-    </div>
-
-    <div id="tab-reviews" class="hidden">
-        <div id="reviews-list" class="grid md:grid-cols-2 gap-6"></div>
-    </div>
-
-    <div id="tab-carts" class="hidden">
-        <div id="clients-list" class="grid md:grid-cols-2 gap-6"></div>
-    </div>
+    <div id="tab-orders" class="hidden"><div id="orders" class="grid md:grid-cols-2 gap-6"></div></div>
+    <div id="tab-reviews" class="hidden"><div id="reviews-list" class="grid md:grid-cols-2 gap-6"></div></div>
+    <div id="tab-carts" class="hidden"><div id="clients-list" class="grid md:grid-cols-2 lg:grid-cols-3 gap-6"></div></div>
 </div>
 
 <script>
-const socket = io({
-    transports: ["websocket"]
-});
-let MENU = [], CATEGORIES = [];
+const socket = io({ transports: ["websocket"] });
+let MENU = [], CATEGORIES = [], currentSelectedClientId = null;
 
 function showToast(msg) {
     const t = document.createElement('div');
-    t.className = `bg-zinc-800 text-white px-6 py-3 rounded-xl shadow-lg border border-zinc-700 font-bold mb-2`;
+    t.className = `bg-zinc-800 text-white px-6 py-3 rounded-xl shadow-lg border border-zinc-700 font-bold mb-2 animate-bounce`;
     t.innerText = msg;
     document.getElementById('toast-container').appendChild(t);
     setTimeout(() => t.remove(), 3000);
@@ -87,7 +84,6 @@ function switchTab(tab) {
     document.getElementById(`tab-${tab}`).classList.remove('hidden');
     document.getElementById(`tab-btn-${tab}`).classList.replace('text-zinc-400', 'bg-zinc-800');
     document.getElementById(`tab-btn-${tab}`).classList.add('text-white');
-    
     if(tab === 'carts') loadClients();
     if(tab === 'reviews') loadReviews();
 }
@@ -98,22 +94,10 @@ async function loadData() {
     renderMenu(); renderCategories(); renderOrders(await o.json());
 }
 
-async function importData(event) {
-    const file = event.target.files[0];
-    if(!file) return;
-    const formData = new FormData();
-    formData.append("file", file);
-    await fetch("/api/import", { method: "POST", body: formData });
-    showToast("Дані імпортовано!");
-    event.target.value = "";
-    loadData();
-}
-
-// ... Тут ідуть старі функції renderMenu(), addMenu() та renderCategories() з попереднього варіанту ...
 function renderCategories() {
     document.getElementById("categoriesList").innerHTML = CATEGORIES.map(c => `
-        <div class="flex justify-between bg-zinc-800 p-2 rounded-lg">
-            <span>${c.name}</span>
+        <div class="flex justify-between bg-zinc-800 p-3 rounded-xl">
+            <span class="font-bold">${c.name}</span>
             <button onclick="deleteCategory(${c.id})" class="text-red-400">✕</button>
         </div>`).join("");
     document.getElementById("category").innerHTML = CATEGORIES.map(c => `<option value="${c.name}">${c.name}</option>`).join("");
@@ -124,85 +108,115 @@ async function addCategory() {
     document.getElementById("catName").value = "";
 }
 async function deleteCategory(id) { await fetch("/api/category/delete/"+id, {method: "POST"}); }
+
 function renderMenu() {
     document.getElementById("products").innerHTML = MENU.map(i => `
-        <div class="bg-zinc-900 p-4 rounded-xl border border-zinc-800 flex justify-between">
-            <div>
-                <div class="text-xs text-zinc-500">${i.category}</div>
-                <div class="font-bold">${i.name}</div>
-                <div class="text-green-400">${i.price} ₴</div>
+        <div class="bg-zinc-900 p-4 rounded-2xl border border-zinc-800 flex justify-between gap-4">
+            <div class="flex-1">
+                <div class="text-[10px] uppercase text-zinc-500 font-bold mb-1">${i.category}</div>
+                <div class="font-bold text-lg">${i.name}</div>
+                <div class="text-xs text-zinc-400 line-clamp-1 mb-2">${i.description || ''}</div>
+                <div class="text-green-400 font-bold">${i.price} ₴</div>
             </div>
-            <button onclick="deleteProduct(${i.id})" class="text-red-500 font-bold">Видалити</button>
+            <button onclick="deleteProduct(${i.id})" class="text-red-900 bg-red-900/10 h-10 px-3 rounded-lg font-bold">Видалити</button>
         </div>`).join("");
 }
 async function addMenu() {
     const fd = new FormData();
     fd.append("name", document.getElementById("name").value);
+    fd.append("description", document.getElementById("desc").value);
     fd.append("price", document.getElementById("price").value);
     fd.append("category", document.getElementById("category").value);
     if(document.getElementById("image").files[0]) fd.append("image", document.getElementById("image").files[0]);
     await fetch("/api/menu/add", { method: "POST", body: fd });
+    document.getElementById("name").value = ""; document.getElementById("desc").value = "";
 }
 async function deleteProduct(id) { await fetch("/api/menu/delete/"+id, {method: "POST"}); }
 
 function renderOrders(orders) {
     document.getElementById("orders").innerHTML = orders.reverse().map(o => `
-        <div class="bg-zinc-900 p-6 rounded-2xl border border-zinc-800">
-            <div class="flex justify-between font-bold mb-4">
-                <span class="text-2xl">Стіл #${o.table}</span>
-                <span class="text-green-400 text-2xl">${o.total} ₴</span>
+        <div class="bg-zinc-900 p-6 rounded-3xl border border-zinc-800">
+            <div class="flex justify-between items-center mb-4">
+                <span class="text-2xl font-bold">Стіл #${o.table}</span>
+                <span class="bg-green-900/20 text-green-400 px-3 py-1 rounded-full font-bold">${o.total} ₴</span>
             </div>
-            ${o.comment ? `<div class="bg-yellow-900/20 text-yellow-500 p-3 rounded-lg text-sm mb-4">💬 ${o.comment}</div>` : ''}
-            <div class="space-y-2 mb-6">
-                ${o.items.map(i => `<div class="flex justify-between">
-                    <span>${i.name} ${i.to_go ? '<span class="text-xs bg-purple-600 px-2 py-0.5 rounded text-white ml-2">З собою</span>' : ''}</span>
+            ${o.comment ? `<div class="bg-yellow-900/10 text-yellow-500 p-3 rounded-xl text-sm mb-4 italic">"${o.comment}"</div>` : ''}
+            <div class="space-y-2 mb-6 text-sm">
+                ${o.items.map(i => `<div class="flex justify-between border-b border-zinc-800 pb-1">
+                    <span>${i.name} ${i.to_go ? '🥡' : ''}</span>
                     <span class="text-zinc-500">${i.status}</span>
                 </div>`).join("")}
             </div>
-            <button onclick="setAllStatus(${o.id}, 'Завершене')" class="w-full bg-blue-600 py-3 rounded-xl font-bold">Готово все</button>
+            <button onclick="setAllStatus(${o.id}, 'Завершене')" class="w-full bg-blue-600 py-4 rounded-2xl font-bold active:scale-95 transition">Готово</button>
         </div>`).join("");
 }
-
 async function setAllStatus(id, status) {
     await fetch("/api/order/all_status", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({order_id: id, status: status}) });
 }
 
-// Нові функції для Клієнтів та Відгуків
+// Пристрої
 async function loadClients() {
     const res = await fetch("/api/clients");
     const clients = await res.json();
-    document.getElementById("clients-list").innerHTML = clients.map(c => `
-        <div class="bg-zinc-900 p-5 rounded-2xl border border-zinc-800 text-sm">
-            <div class="text-zinc-500 mb-2 text-xs">${c.client_id}</div>
-            <div class="font-bold">IP: <span class="text-green-400">${c.ip || 'Unknown'}</span></div>
-            <div>Пристрій: ${c.user_agent ? c.user_agent.split(') ')[0]+')' : 'Unknown'}</div>
-            <div>Столи: ${c.tables_visited?.join(', ') || '-'}</div>
-            <div class="mt-4 border-t border-zinc-800 pt-3">
-                <div class="font-bold mb-2">Зараз у кошику:</div>
-                ${c.cart?.length ? c.cart.map(i => `<div>- ${i.name}</div>`).join('') : '<span class="text-zinc-600">Пусто</span>'}
+    document.getElementById("clients-list").innerHTML = clients.map(c => {
+        const isOnline = (new Date() - new Date(c.last_seen_raw)) < 60000;
+        return `
+        <div class="bg-zinc-900 p-5 rounded-3xl border border-zinc-800">
+            <div class="flex justify-between items-start mb-4">
+                <div class="w-3 h-3 rounded-full ${isOnline ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-zinc-700'}"></div>
+                <span class="text-[10px] text-zinc-500 font-mono">${c.client_id.substring(0,8)}</span>
             </div>
-        </div>`).join("");
+            <div class="font-bold mb-1">${isOnline ? 'Зараз на сайті' : 'Був: ' + c.last_seen}</div>
+            <div class="text-xs text-zinc-400 mb-4 truncate">${c.user_agent_short || 'Пристрій невідомий'}</div>
+            <button onclick='showDeviceInfo(${JSON.stringify(c)})' class="w-full bg-zinc-800 hover:bg-zinc-700 py-3 rounded-xl text-sm font-bold transition">Деталі</button>
+        </div>`}).join("");
+}
+
+function showDeviceInfo(c) {
+    currentSelectedClientId = c.client_id;
+    const content = `
+        <p><b>ID:</b> ${c.client_id}</p>
+        <p><b>IP:</b> <span class="text-blue-400">${c.ip}</span></p>
+        <p><b>Останній захід:</b> ${c.last_seen}</p>
+        <p><b>Пристрій:</b> ${c.user_agent}</p>
+        <p><b>Сповіщення:</b> ${c.notif_permission === 'granted' ? '✅ Дозволено' : '❌ Заблоковано'}</p>
+        <p><b>Відвідані столи:</b> ${c.tables_visited?.join(', ') || '-'}</p>
+        <div class="mt-4 pt-4 border-t border-zinc-800">
+            <b>Зараз у кошику:</b>
+            <div class="mt-2 space-y-1">${c.cart?.map(i => `<div>- ${i.name}</div>`).join('') || 'Пусто'}</div>
+        </div>
+    `;
+    document.getElementById("device-info-content").innerHTML = content;
+    document.getElementById("device-modal").classList.remove("hidden");
+}
+
+function promptNotif() {
+    const msg = prompt("Введіть текст сповіщення:");
+    if(msg) {
+        socket.emit("admin_send_message", { client_id: currentSelectedClientId, msg: msg });
+        showToast("Відправлено!");
+    }
 }
 
 async function loadReviews() {
     const res = await fetch("/api/reviews");
     const reviews = await res.json();
     document.getElementById("reviews-list").innerHTML = reviews.reverse().map(r => `
-        <div class="bg-zinc-900 p-5 rounded-2xl border border-zinc-800">
+        <div class="bg-zinc-900 p-5 rounded-3xl border border-zinc-800">
             <div class="flex justify-between mb-2">
-                <span class="text-yellow-500 font-bold text-xl">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</span>
-                <span class="text-zinc-500 text-sm">${r.date}</span>
+                <span class="text-yellow-500 font-bold">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</span>
+                <span class="text-zinc-500 text-xs">${r.date}</span>
             </div>
-            <p class="text-lg italic mb-4">"${r.text}"</p>
-            ${r.order ? `<div class="text-xs text-zinc-500 border-t border-zinc-800 pt-2">Стіл #${r.order.table} | ${r.order.items.map(i=>i.name).join(', ')}</div>` : ''}
+            <p class="italic mb-4 text-zinc-200">"${r.text}"</p>
+            <div class="text-[10px] text-zinc-600">Стіл #${r.order?.table || '?'} | ${r.order?.items.map(i=>i.name).join(', ')}</div>
         </div>`).join("");
 }
 
-socket.on("new_order", () => { showToast("Нове замовлення!"); loadData(); });
-socket.on("order_updated", () => loadData());
-socket.on("menu_updated", () => loadData());
-socket.on("clients_updated", () => loadClients());
-socket.on("reviews_updated", () => loadReviews());
+socket.on("new_order", () => { showToast("🔔 Нове замовлення!"); loadData(); });
+socket.on("order_updated", loadData);
+socket.on("menu_updated", loadData);
+socket.on("clients_updated", loadClients);
+socket.on("reviews_updated", loadReviews);
 
 loadData();
 </script>
