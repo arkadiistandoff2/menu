@@ -19,14 +19,21 @@
         .modal-hidden { transform: translateY(100%); }
         .modal-visible { transform: translateY(0); }
         .no-scrollbar::-webkit-scrollbar { display: none; }
-        
-        /* Переходи для теми */
         * { transition: background-color 0.3s, border-color 0.3s, color 0.3s; }
     </style>
 </head>
 <body class="bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen transition-colors">
 
 <div id="toast-container" class="fixed top-5 left-1/2 transform -translate-x-1/2 z-[100] flex flex-col gap-3 w-full max-w-sm px-4 pointer-events-none"></div>
+
+<div id="admin-notif" class="fixed inset-0 bg-black/60 z-[200] hidden flex items-center justify-center p-6 backdrop-blur-sm">
+    <div class="bg-white dark:bg-zinc-900 p-8 rounded-3xl w-full max-w-sm text-center shadow-2xl">
+        <div class="text-4xl mb-4">🔔</div>
+        <h3 class="text-xl font-bold mb-2">Сповіщення від адміністрації</h3>
+        <p id="admin-notif-text" class="text-zinc-500 mb-6"></p>
+        <button onclick="document.getElementById('admin-notif').classList.add('hidden')" class="w-full bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 py-4 rounded-2xl font-bold">Зрозуміло</button>
+    </div>
+</div>
 
 <div class="sticky top-0 bg-white/90 dark:bg-zinc-950/90 backdrop-blur z-40 pb-2 border-b border-zinc-200 dark:border-zinc-800">
     <div class="p-5 pb-2 flex justify-between items-center">
@@ -41,9 +48,7 @@
     <div id="category-filters" class="flex overflow-x-auto px-5 gap-3 no-scrollbar pb-2"></div>
 </div>
 
-<div class="p-5">
-    <div id="menu" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
-</div>
+<div class="p-5"><div id="menu" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div></div>
 
 <div class="fixed bottom-0 left-0 w-full bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 p-4 px-6 flex justify-between items-center z-50">
     <div>
@@ -62,7 +67,7 @@
     </div>
     <div id="cart-items" class="flex-1 overflow-y-auto p-5"></div>
     <div class="p-6 bg-white dark:bg-zinc-900 border-t border-zinc-200 dark:border-zinc-800 pb-10">
-        <textarea id="order-comment" placeholder="Коментар до замовлення (необов'язково)" class="w-full bg-zinc-100 dark:bg-zinc-800 dark:text-white p-3 rounded-xl mb-4 border border-transparent outline-none"></textarea>
+        <textarea id="order-comment" placeholder="Коментар до замовлення..." class="w-full bg-zinc-100 dark:bg-zinc-800 dark:text-white p-3 rounded-xl mb-4 outline-none"></textarea>
         <div class="flex justify-between items-center mb-5">
             <span class="text-lg text-zinc-500 font-bold">Сума:</span>
             <span class="text-2xl font-bold text-green-600"><span id="modal-total">0</span> ₴</span>
@@ -85,17 +90,13 @@
 </div>
 
 <script>
-const socket = io({
-    transports: ["websocket"]
-});
+const socket = io({ transports: ["websocket"] });
 const TABLE_ID = {{ table_id }};
+let CLIENT_ID = localStorage.getItem('clientId') || crypto.randomUUID();
+localStorage.setItem('clientId', CLIENT_ID);
 
-let CLIENT_ID = localStorage.getItem('clientId');
-if (!CLIENT_ID) { CLIENT_ID = crypto.randomUUID(); localStorage.setItem('clientId', CLIENT_ID); }
+let MENU = [], CATEGORIES = [], cart = JSON.parse(localStorage.getItem('cart') || '[]'), activeCategory = 'all', currentReviewOrderId = null, reviewRating = 5;
 
-let MENU = [], CATEGORIES = [], cart = [], activeCategory = 'all', currentReviewOrderId = null, reviewRating = 5;
-
-// Тема
 function toggleTheme() {
     document.documentElement.classList.toggle('dark');
     localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
@@ -103,39 +104,27 @@ function toggleTheme() {
 
 function showToast(msg) {
     const t = document.createElement('div');
-    t.className = `bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 px-6 py-4 rounded-2xl shadow-xl transform transition-all translate-y-10 font-bold text-center`;
+    t.className = `bg-zinc-900 dark:bg-white text-white dark:text-zinc-900 px-6 py-4 rounded-2xl shadow-xl transform transition-all translate-y-10 font-bold text-center pointer-events-auto cursor-pointer`;
     t.innerText = msg;
     document.getElementById('toast-container').appendChild(t);
-    setTimeout(() => { t.classList.remove('translate-y-10'); }, 10);
-    setTimeout(() => { t.classList.add('translate-y-10'); setTimeout(() => t.remove(), 300); }, 3000);
+    setTimeout(() => t.classList.remove('translate-y-10'), 10);
+    setTimeout(() => { t.classList.add('translate-y-10'); setTimeout(() => t.remove(), 300); }, 5000);
 }
 
-// Завантаження та фільтрація кошика
 async function loadData() {
     const [m, c] = await Promise.all([fetch("/api/menu"), fetch("/api/categories")]);
     MENU = await m.json(); CATEGORIES = await c.json();
-    
-    // Перевірка кошика на видалені товари
-    const validIds = new Set(MENU.map(item => item.id));
-    const oldLength = cart.length;
-    cart = cart.filter(item => validIds.has(item.id));
-    if(cart.length !== oldLength) {
-        showToast("Деякі товари зникли з меню і були видалені з кошика");
-        updateCartUI();
-    }
-
-    renderCategories(); renderMenu();
+    updateCartUI(); renderCategories(); renderMenu();
 }
 
 function renderCategories() {
     const f = document.getElementById("category-filters");
-    f.innerHTML = `<button onclick="setCategory('all')" class="whitespace-nowrap px-5 py-2 rounded-full text-sm font-bold transition ${activeCategory === 'all' ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900' : 'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400'}">Всі</button>`;
+    f.innerHTML = `<button onclick="setCategory('all')" class="whitespace-nowrap px-5 py-2 rounded-full text-sm font-bold transition ${activeCategory === 'all' ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900' : 'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800'}">Всі</button>`;
     CATEGORIES.forEach(cat => {
-        const isActive = activeCategory === cat.name;
-        f.innerHTML += `<button onclick="setCategory('${cat.name}')" class="whitespace-nowrap px-5 py-2 rounded-full text-sm font-bold transition ${isActive ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900' : 'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-600 dark:text-zinc-400'}">${cat.name}</button>`;
+        f.innerHTML += `<button onclick="setCategory('${cat.name}')" class="whitespace-nowrap px-5 py-2 rounded-full text-sm font-bold transition ${activeCategory === cat.name ? 'bg-zinc-900 dark:bg-white text-white dark:text-zinc-900' : 'bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800'}">${cat.name}</button>`;
     });
 }
-function setCategory(name) { activeCategory = name; renderCategories(); renderMenu(); }
+function setCategory(n) { activeCategory = n; renderCategories(); renderMenu(); }
 
 function renderMenu() {
     const m = document.getElementById("menu");
@@ -147,44 +136,33 @@ function renderMenu() {
                 <div class="absolute bottom-3 right-3 bg-white/90 dark:bg-zinc-900/90 backdrop-blur px-4 py-1.5 rounded-full font-bold shadow-sm">${item.price} ₴</div>
             </div>
             <div class="px-5 pt-4 flex-1 flex flex-col">
-                <h2 class="text-xl font-bold mb-2">${item.name}</h2>
-                <p class="text-sm text-zinc-500 mb-4 flex-1 line-clamp-2">${item.description}</p>
-                <button onclick='addToCart(${JSON.stringify(item)})' class="bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 font-bold py-3.5 rounded-xl active:scale-95 transition">Додати в кошик</button>
+                <h2 class="text-xl font-bold mb-1">${item.name}</h2>
+                <p class="text-xs text-zinc-500 mb-4 line-clamp-2">${item.description || 'Опис відсутній'}</p>
+                <button onclick='addToCart(${JSON.stringify(item)})' class="bg-zinc-100 dark:bg-zinc-800 font-bold py-3.5 rounded-xl active:scale-95 transition">Додати</button>
             </div>
         </div>`).join("");
 }
 
-// Робота з кошиком
 function addToCart(item) {
-    item.to_go = false; // По дефолту не з собою
-    cart.push(item);
-    updateCartUI();
-    syncWithServer();
-    showToast(`"${item.name}" додано`);
+    cart.push({...item, to_go: false});
+    updateCartUI(); syncWithServer();
+    showToast(`"${item.name}" у кошику`);
 }
-
-function toggleToGo(index) {
-    cart[index].to_go = !cart[index].to_go;
-    updateCartUI();
-    syncWithServer();
+function removeFromCart(i) {
+    cart.splice(i, 1); updateCartUI(); syncWithServer();
+    if(!cart.length && !document.getElementById('cart-modal').classList.contains('modal-hidden')) toggleCart();
 }
-
-function removeFromCart(index) {
-    cart.splice(index, 1);
-    updateCartUI();
-    syncWithServer();
-    if(cart.length === 0) toggleCart();
-}
+function toggleToGo(i) { cart[i].to_go = !cart[i].to_go; updateCartUI(); syncWithServer(); }
 
 function updateCartUI() {
-    const total = cart.reduce((sum, item) => sum + Number(item.price), 0);
+    localStorage.setItem('cart', JSON.stringify(cart));
+    const total = cart.reduce((s, i) => s + Number(i.price), 0);
     document.getElementById("bar-total").innerText = total;
     document.getElementById("modal-total").innerText = total;
     document.getElementById("bar-count").innerText = cart.length;
-    
     document.getElementById("cart-items").innerHTML = cart.length ? cart.map((item, i) => `
-        <div class="bg-white dark:bg-zinc-900 p-4 rounded-2xl mb-3 border border-zinc-100 dark:border-zinc-800 flex flex-col gap-2">
-            <div class="flex justify-between items-center">
+        <div class="bg-white dark:bg-zinc-900 p-4 rounded-2xl mb-3 border border-zinc-100 dark:border-zinc-800">
+            <div class="flex justify-between items-center mb-2">
                 <div class="font-bold">${item.name}</div>
                 <div class="flex items-center gap-3">
                     <span class="font-bold text-green-500">${item.price} ₴</span>
@@ -192,14 +170,13 @@ function updateCartUI() {
                 </div>
             </div>
             <label class="flex items-center gap-2 text-sm text-zinc-500 cursor-pointer w-max">
-                <input type="checkbox" onchange="toggleToGo(${i})" ${item.to_go ? 'checked' : ''} class="w-4 h-4 rounded accent-blue-600">
-                Забрати з собою 🥡
+                <input type="checkbox" onchange="toggleToGo(${i})" ${item.to_go ? 'checked' : ''} class="accent-blue-600"> Забрати з собою 🥡
             </label>
         </div>`).join("") : `<div class="text-center text-zinc-500 mt-10 font-bold">Кошик порожній</div>`;
 }
 
 function toggleCart() {
-    if(cart.length === 0 && document.getElementById('cart-modal').classList.contains('modal-hidden')) return showToast("Кошик порожній");
+    if(!cart.length && document.getElementById('cart-modal').classList.contains('modal-hidden')) return showToast("Кошик порожній");
     document.getElementById("cart-modal").classList.toggle("modal-hidden");
     document.getElementById("cart-modal").classList.toggle("modal-visible");
 }
@@ -207,64 +184,59 @@ function toggleCart() {
 async function sendOrder() {
     if(!cart.length) return;
     const btn = document.getElementById("btn-checkout");
-    btn.innerText = "Відправка..."; btn.disabled = true;
-
-    const res = await fetch("/api/order", {
+    btn.disabled = true; btn.innerText = "Відправка...";
+    await fetch("/api/order", {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ 
-            table: TABLE_ID, 
-            items: cart, 
-            total: cart.reduce((s, i) => s + Number(i.price), 0),
-            client_id: CLIENT_ID,
-            comment: document.getElementById("order-comment").value
-        })
+        body: JSON.stringify({ table: TABLE_ID, items: cart, total: cart.reduce((s,i)=>s+Number(i.price),0), client_id: CLIENT_ID, comment: document.getElementById("order-comment").value })
     });
-    
-    cart = []; document.getElementById("order-comment").value = "";
-    updateCartUI(); syncWithServer(); toggleCart();
-    
-    btn.innerText = "Оформити замовлення"; btn.disabled = false;
-    showToast("Замовлення відправлено!");
+    cart = []; updateCartUI(); syncWithServer(); toggleCart();
+    btn.disabled = false; btn.innerText = "Оформити замовлення";
+    showToast("Замовлення прийнято! Не забудьте залишити відгук після отримання 🤤");
 }
 
-// Синхронізація "живого" кошика з адмінкою
 function syncWithServer() {
     socket.emit("sync_client", {
-        client_id: CLIENT_ID, table_id: TABLE_ID, cart: cart, user_agent: navigator.userAgent
+        client_id: CLIENT_ID, table_id: TABLE_ID, cart: cart, 
+        user_agent: navigator.userAgent,
+        notif_permission: Notification.permission
     });
 }
 
-// Логіка відгуків
+// Відгуки
 const stars = document.querySelectorAll("#star-rating span");
-stars.forEach(star => {
-    star.addEventListener("click", (e) => {
-        reviewRating = parseInt(e.target.dataset.value);
-        stars.forEach((s, i) => s.className = i < reviewRating ? "text-yellow-500" : "text-zinc-300 dark:text-zinc-700");
-    });
+stars.forEach(s => s.onclick = (e) => {
+    reviewRating = parseInt(e.target.dataset.value);
+    stars.forEach((st, i) => st.className = i < reviewRating ? "text-yellow-500" : "text-zinc-700");
 });
-
-function closeReview() { document.getElementById("review-modal").classList.add("hidden"); }
 
 async function sendReview() {
     await fetch("/api/review", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({ order_id: currentReviewOrderId, rating: reviewRating, text: document.getElementById("review-text").value })
     });
-    closeReview(); showToast("Дякуємо за відгук! ❤️");
+    document.getElementById("review-modal").classList.add("hidden"); showToast("Дякуємо! ❤️");
 }
 
+// Сокети
 socket.on("menu_updated", loadData);
 socket.on("notify_client", (data) => {
-    // Якщо замовлення завершено — показуємо модалку відгуку
-    if(data.status === "Завершене" || data.status === "Завершено") {
-        currentReviewOrderId = data.order_id;
-        document.getElementById("review-modal").classList.remove("hidden");
+    if(data.status === "Завершене") { currentReviewOrderId = data.order_id; document.getElementById("review-modal").classList.remove("hidden"); }
+});
+socket.on("admin_message", (data) => {
+    if(Notification.permission === "granted") {
+        new Notification("Сповіщення від Адміна", { body: data.msg });
+    } else {
+        document.getElementById("admin-notif-text").innerText = data.msg;
+        document.getElementById("admin-notif").classList.remove("hidden");
     }
 });
 
-// Перший запуск
+if ("Notification" in window && Notification.permission === "default") {
+    setTimeout(() => { Notification.requestPermission().then(syncWithServer); }, 5000);
+}
+
 loadData();
-syncWithServer(); // Відправляємо інфу про клієнта при вході
+syncWithServer();
 </script>
 </body>
 </html>
