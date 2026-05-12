@@ -242,7 +242,10 @@
             }
         }
 
-        async function sendOrder() {
+        // =========================================================
+        // МИТТЄВА ВІДПРАВКА ЗАМОВЛЕННЯ ЧЕРЕЗ СОКЕТИ
+        // =========================================================
+        function sendOrder() {
             const btn = document.getElementById("send-order-btn");
             const originalHtml = btn.innerHTML;
             btn.disabled = true;
@@ -253,38 +256,30 @@
                 for(let i=0; i<item.quantity; i++) expandedItems.push({name: item.name, price: item.price});
             });
 
-            try {
-                const res = await fetch("/api/order", {
-                    method: "POST",
-                    headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({
-                        table: TABLE_ID,
-                        items: expandedItems,
-                        total: cart.reduce((a, b) => a + (parseInt(b.price) * b.quantity), 0),
-                        comment: document.getElementById("order-comment").value,
-                        client_id: CLIENT_ID
-                    })
-                });
+            const orderData = {
+                table: TABLE_ID,
+                items: expandedItems,
+                total: cart.reduce((a, b) => a + (parseInt(b.price) * b.quantity), 0),
+                comment: document.getElementById("order-comment").value,
+                client_id: CLIENT_ID
+            };
 
-                if(!res.ok) {
-                    throw new Error("Сервер не відповідає (Код " + res.status + ")");
-                }
-
-                const data = await res.json();
-                currentReviewOrderId = data.order_id;
-                
-                cart = [];
-                updateCartUI();
-                toggleCart(false);
-                document.getElementById("order-comment").value = "";
-                showToast("Замовлення успішно відправлено!");
-            } catch (e) {
-                console.error("Помилка:", e);
-                showToast("Помилка зв'язку. Спробуйте ще раз.");
-            } finally {
+            // Сокет відправляє дані миттєво
+            socket.emit("create_order", orderData, (response) => {
                 btn.disabled = false;
                 btn.innerHTML = originalHtml;
-            }
+
+                if (response && response.success) {
+                    currentReviewOrderId = response.order_id;
+                    cart = [];
+                    updateCartUI();
+                    toggleCart(false);
+                    document.getElementById("order-comment").value = "";
+                    showToast("Замовлення прийнято!");
+                } else {
+                    showToast("Помилка зв'язку. Спробуйте ще раз.");
+                }
+            });
         }
 
         function syncWithServer() {
