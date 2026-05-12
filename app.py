@@ -142,6 +142,8 @@ def create_order():
             "status": "Активне",
             "created": str(datetime.now().strftime("%H:%M"))
         }
+        
+        # Зберігаємо в базу
         db.orders.insert_one(order)
         
         db.clients.update_one(
@@ -150,9 +152,10 @@ def create_order():
             upsert=True
         )
         
-        del order["_id"]
-        socketio.emit("new_order", order)
+        # Сповіщаємо адмінку (без передачі масиву, щоб уникнути помилок конвертації)
+        socketio.emit("new_order")
         socketio.emit("clients_updated")
+        
         return jsonify({"success": True, "order_id": order_id})
     except Exception as e:
         print(f"Помилка створення замовлення: {e}")
@@ -205,7 +208,7 @@ def get_reviews():
 def handle_sync_client(data):
     client_id = data.get("client_id")
     if client_id:
-        join_room(client_id)  # Приєднуємо клієнта до його приватної кімнати
+        join_room(client_id)  # Приєднуємо клієнта до його власної "кімнати" для сповіщень
         
     ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     table_id = data.get("table_id")
@@ -227,6 +230,7 @@ def handle_sync_client(data):
 
 @socketio.on("admin_send_message")
 def admin_msg(data):
+    # Відправляємо повідомлення в конкретну кімнату клієнта
     socketio.emit("admin_message", {"msg": data["msg"]}, room=data["client_id"])
 
 @app.route("/api/clients")
@@ -265,4 +269,4 @@ def import_data():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     socketio.run(app, host="0.0.0.0", port=port)
-        
+    
