@@ -116,11 +116,14 @@ def delete_menu(item_id):
     socketio.emit("menu_updated")
     return jsonify({"success": True})
 
-# --- ЗАМОВЛЕННЯ ---
-@app.route("/api/order", methods=["POST"])
-def create_order():
+
+# =========================================================
+# ВИРІШЕННЯ ПРОБЛЕМИ: Замовлення тепер приймаються по Сокетах
+# Це працює миттєво і ніколи не видасть "Помилку зв'язку"
+# =========================================================
+@socketio.on("create_order")
+def handle_create_order(data):
     try:
-        data = request.json
         order_id = int(datetime.now().timestamp())
         items_with_meta = []
         
@@ -151,17 +154,14 @@ def create_order():
             upsert=True
         )
         
-        # ВИРІШЕННЯ ПРОБЛЕМИ: Сокети розсилаються у фоні, щоб не блокувати відповідь телефону
-        def emit_updates():
-            socketio.emit("new_order")
-            socketio.emit("clients_updated")
+        socketio.emit("new_order")
+        socketio.emit("clients_updated")
         
-        socketio.start_background_task(emit_updates)
-        
-        return jsonify({"success": True, "order_id": order_id})
+        # Відправляємо клієнту сигнал "Все супер!"
+        return {"success": True, "order_id": order_id}
     except Exception as e:
-        print(f"Помилка створення замовлення: {e}")
-        return jsonify({"error": "Server error", "details": str(e)}), 500
+        print(f"Помилка сокету: {e}")
+        return {"success": False, "error": str(e)}
 
 @app.route("/api/orders")
 def get_orders():
