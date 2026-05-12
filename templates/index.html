@@ -19,8 +19,7 @@
         .modal-hidden { transform: translateY(100%); }
         .modal-visible { transform: translateY(0); }
         .no-scrollbar::-webkit-scrollbar { display: none; }
-        * { transition: background-color 0.3s, border-color 0.3s; }
-        .img-gradient { background: linear-gradient(to bottom, transparent 60%, rgba(0,0,0,0.4)); }
+        * { transition: background-color 0.3s, border-color 0.3s, color 0.3s; }
     </style>
 </head>
 <body class="bg-zinc-50 dark:bg-black text-zinc-900 dark:text-zinc-100 min-h-screen">
@@ -35,11 +34,8 @@
     </header>
 
     <main class="p-5 max-w-2xl mx-auto">
-        <div id="categories" class="flex gap-2 overflow-x-auto no-scrollbar pb-6 mb-2">
-            </div>
-
-        <div id="menu" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            </div>
+        <div id="categories" class="flex gap-2 overflow-x-auto no-scrollbar pb-6 mb-2"></div>
+        <div id="menu" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
     </main>
 
     <div class="fixed bottom-0 left-0 right-0 p-5 z-50 pointer-events-none">
@@ -92,6 +88,18 @@
         </div>
     </div>
 
+    <div id="admin-notif-modal" class="fixed inset-0 z-[100] hidden flex items-center justify-center p-5">
+        <div class="absolute inset-0 bg-black/60 backdrop-blur-md"></div>
+        <div class="bg-white dark:bg-zinc-900 rounded-[35px] p-8 w-full max-w-sm relative z-10 text-center shadow-2xl border border-zinc-200 dark:border-zinc-800">
+            <div class="w-12 h-12 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mx-auto mb-4">
+                <svg class="w-6 h-6 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+            </div>
+            <h2 class="text-2xl font-bold mb-2">Сповіщення</h2>
+            <p id="admin-notif-text" class="text-zinc-600 dark:text-zinc-400 mb-8 font-medium"></p>
+            <button onclick="document.getElementById('admin-notif-modal').classList.add('hidden')" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-4 rounded-2xl font-bold shadow-lg transition">Зрозуміло</button>
+        </div>
+    </div>
+
     <script>
         const socket = io();
         const TABLE_ID = window.location.pathname.replace('/', '') || "1";
@@ -100,9 +108,20 @@
 
         let MENU = [];
         let activeCategory = 'all';
-        let cart = JSON.parse(localStorage.getItem('cart')) || [];
         let reviewRating = 0;
         let currentReviewOrderId = null;
+
+        // Міграція старого формату кошика в новий (з кількістю)
+        let cart = [];
+        try {
+            const saved = JSON.parse(localStorage.getItem('cart')) || [];
+            cart = saved.reduce((acc, item) => {
+                const existing = acc.find(i => i.id === item.id);
+                if (existing) existing.quantity += item.quantity || 1;
+                else acc.push({...item, quantity: item.quantity || 1});
+                return acc;
+            }, []);
+        } catch(e) { cart = []; }
 
         async function loadData() {
             try {
@@ -123,26 +142,16 @@
 
         function renderCategories(cats) {
             const container = document.getElementById("categories");
-            const allBtnClass = activeCategory === 'all' 
-                ? 'bg-zinc-900 dark:bg-white text-white dark:text-black shadow-md' 
-                : 'bg-zinc-100 dark:bg-zinc-900 text-zinc-500';
-
-            let html = `<button onclick="filterCategory('all')" class="px-6 py-2.5 rounded-full whitespace-nowrap font-bold transition ${allBtnClass}">Все</button>`;
-            
-            html += cats.map(c => {
-                const isActive = activeCategory === c.name;
-                const btnClass = isActive 
-                    ? 'bg-zinc-900 dark:bg-white text-white dark:text-black shadow-md' 
-                    : 'bg-zinc-100 dark:bg-zinc-900 text-zinc-500';
-                return `<button onclick="filterCategory('${c.name}')" class="px-6 py-2.5 rounded-full whitespace-nowrap font-bold transition ${btnClass}">${c.name}</button>`;
-            }).join("");
-            
+            let html = `<button onclick="filterCategory('all')" class="px-6 py-2.5 rounded-full whitespace-nowrap font-bold transition ${activeCategory === 'all' ? 'bg-zinc-900 dark:bg-white text-white dark:text-black shadow-md' : 'bg-zinc-100 dark:bg-zinc-900 text-zinc-500'}">Все</button>`;
+            html += cats.map(c => `
+                <button onclick="filterCategory('${c.name}')" class="px-6 py-2.5 rounded-full whitespace-nowrap font-bold transition ${activeCategory === c.name ? 'bg-zinc-900 dark:bg-white text-white dark:text-black shadow-md' : 'bg-zinc-100 dark:bg-zinc-900 text-zinc-500'}">${c.name}</button>
+            `).join("");
             container.innerHTML = html;
         }
 
         function filterCategory(cat) {
             activeCategory = cat;
-            renderCategories([]); // Оновити візуал кнопок (спрощено)
+            renderCategories([]);
             loadData();
         }
 
@@ -156,41 +165,47 @@
             }
 
             m.innerHTML = filtered.map(item => {
-                // Вирішальний момент для відображення картинки
-                const imgSrc = item.image && item.image.startsWith('data:') 
-                    ? item.image 
-                    : (item.image ? `/static/images/${item.image}` : '');
-
+                const imgSrc = item.image && item.image.startsWith('data:') ? item.image : (item.image ? `/static/images/${item.image}` : '');
+                // Передаємо лише ID, щоб лапки в описі не ламали код
                 return `
                 <div class="bg-white dark:bg-zinc-900 rounded-[32px] shadow-sm border border-zinc-100 dark:border-zinc-800 overflow-hidden flex flex-col">
                     <div class="h-52 bg-zinc-100 dark:bg-zinc-800 relative">
-                        ${imgSrc ? `<img src="${imgSrc}" class="w-full h-full object-cover" loading="lazy">` : '<div class="w-full h-full flex items-center justify-center text-zinc-300 text-xs">Немає фото</div>'}
+                        ${imgSrc ? `<img src="${imgSrc}" class="w-full h-full object-cover" loading="lazy">` : '<div class="w-full h-full flex items-center justify-center text-zinc-300 text-xs font-semibold uppercase tracking-wider">Немає фото</div>'}
                         <div class="absolute bottom-3 right-3 bg-white/95 dark:bg-zinc-900/95 backdrop-blur px-4 py-1.5 rounded-2xl font-extrabold shadow-sm text-sm">${item.price} ₴</div>
                     </div>
                     <div class="px-5 py-5 flex-1 flex flex-col">
                         <h2 class="text-lg font-bold mb-1 leading-tight">${item.name}</h2>
                         <p class="text-xs text-zinc-400 mb-4 line-clamp-2 font-medium">${item.description || ''}</p>
-                        <button onclick='addToCart(${JSON.stringify(item).replace(/'/g, "&apos;")})' class="bg-zinc-900 dark:bg-white text-white dark:text-black font-bold py-3.5 rounded-2xl active:scale-95 transition-all text-sm">Додати</button>
+                        <button onclick="addToCartById(${item.id})" class="bg-zinc-900 dark:bg-white text-white dark:text-black font-bold py-3.5 rounded-2xl active:scale-95 transition-all text-sm">Додати</button>
                     </div>
                 </div>`
             }).join("");
         }
 
-        function addToCart(item) {
-            cart.push({...item, cartId: Date.now() + Math.random()});
+        function addToCartById(id) {
+            const item = MENU.find(i => i.id === id);
+            if(!item) return;
+            const existing = cart.find(i => i.id === id);
+            if(existing) existing.quantity += 1;
+            else cart.push({...item, quantity: 1});
+            
             updateCartUI();
             showToast("Додано");
         }
 
-        function removeFromCart(cartId) {
-            cart = cart.filter(i => i.cartId !== cartId);
-            updateCartUI();
+        function changeQuantity(id, delta) {
+            const existing = cart.find(i => i.id === id);
+            if(existing) {
+                existing.quantity += delta;
+                if(existing.quantity <= 0) cart = cart.filter(i => i.id !== id);
+                updateCartUI();
+            }
         }
 
         function updateCartUI() {
             localStorage.setItem('cart', JSON.stringify(cart));
-            const count = cart.length;
-            const sum = cart.reduce((a, b) => a + parseInt(b.price), 0);
+            const count = cart.reduce((a, b) => a + b.quantity, 0);
+            const sum = cart.reduce((a, b) => a + (parseInt(b.price) * b.quantity), 0);
             
             document.getElementById("cart-count-total").innerText = count;
             document.getElementById("cart-sum").innerText = sum + " ₴";
@@ -199,11 +214,15 @@
             const itemsCont = document.getElementById("cart-items");
             itemsCont.innerHTML = cart.map(i => `
                 <div class="flex justify-between items-center bg-zinc-50 dark:bg-zinc-900 p-4 rounded-2xl border border-zinc-100 dark:border-zinc-800">
-                    <div class="flex flex-col">
-                        <span class="font-bold">${i.name}</span>
-                        <span class="text-sm text-zinc-500">${i.price} ₴</span>
+                    <div class="flex flex-col flex-1 pr-4">
+                        <span class="font-bold line-clamp-1">${i.name}</span>
+                        <span class="text-sm text-zinc-500 font-medium">${parseInt(i.price) * i.quantity} ₴</span>
                     </div>
-                    <button onclick="removeFromCart(${i.cartId})" class="text-zinc-400 hover:text-red-500 font-bold p-2 text-xs uppercase tracking-widest">Прибрати</button>
+                    <div class="flex items-center gap-3">
+                        <button onclick="changeQuantity(${i.id}, -1)" class="w-8 h-8 flex items-center justify-center bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-full font-bold active:scale-95 transition">-</button>
+                        <span class="font-bold text-lg w-4 text-center">${i.quantity}</span>
+                        <button onclick="changeQuantity(${i.id}, 1)" class="w-8 h-8 flex items-center justify-center bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-full font-bold active:scale-95 transition">+</button>
+                    </div>
                 </div>
             `).join("");
 
@@ -231,18 +250,26 @@
             btn.disabled = true;
             btn.innerHTML = "Відправка...";
 
+            // Розгортаємо замовлення, щоб на кухню падала кожна порція окремо (для статусів)
+            const expandedItems = [];
+            cart.forEach(item => {
+                for(let i=0; i<item.quantity; i++) expandedItems.push({name: item.name, price: item.price});
+            });
+
             try {
                 const res = await fetch("/api/order", {
                     method: "POST",
                     headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({
                         table: TABLE_ID,
-                        items: cart,
-                        total: cart.reduce((a, b) => a + parseInt(b.price), 0),
+                        items: expandedItems,
+                        total: cart.reduce((a, b) => a + (parseInt(b.price) * b.quantity), 0),
                         comment: document.getElementById("order-comment").value,
                         client_id: CLIENT_ID
                     })
                 });
+
+                if(!res.ok) throw new Error("Помилка сервера");
 
                 const data = await res.json();
                 currentReviewOrderId = data.order_id;
@@ -250,9 +277,10 @@
                 cart = [];
                 updateCartUI();
                 toggleCart(false);
+                document.getElementById("order-comment").value = "";
                 showToast("Замовлення прийнято");
             } catch (e) {
-                showToast("Помилка мережі");
+                showToast("Помилка зв'язку");
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = originalHtml;
@@ -267,7 +295,7 @@
 
         function showToast(text) {
             const t = document.createElement("div");
-            t.className = "fixed top-8 left-1/2 -translate-x-1/2 bg-zinc-900/90 dark:bg-white/90 backdrop-blur text-white dark:text-black px-6 py-3 rounded-2xl shadow-xl font-bold z-[100] transition-all duration-300 opacity-0 scale-90";
+            t.className = "fixed top-8 left-1/2 -translate-x-1/2 bg-zinc-900/90 dark:bg-white/90 backdrop-blur text-white dark:text-black px-6 py-3 rounded-2xl shadow-xl font-bold z-[100] transition-all duration-300 opacity-0 scale-90 tracking-wide";
             t.innerText = text;
             document.body.appendChild(t);
             setTimeout(() => { t.classList.remove('opacity-0', 'scale-90'); }, 50);
@@ -277,7 +305,7 @@
             }, 2500);
         }
 
-        // Зірки
+        // Відгуки
         const stars = document.querySelectorAll("#star-rating span");
         stars.forEach(star => {
             star.addEventListener("click", (e) => {
@@ -297,11 +325,7 @@
             await fetch("/api/review", {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({ 
-                    order_id: currentReviewOrderId, 
-                    rating: reviewRating, 
-                    text: document.getElementById("review-text").value 
-                })
+                body: JSON.stringify({ order_id: currentReviewOrderId, rating: reviewRating, text: document.getElementById("review-text").value })
             });
             closeReview();
             showToast("Дякуємо");
@@ -311,6 +335,12 @@
             if (data.status === "Завершене" || data.status === "Завершено") {
                 document.getElementById("review-modal").classList.remove("hidden");
             }
+        });
+
+        // Слухаємо сповіщення від адміна
+        socket.on("admin_message", (data) => {
+            document.getElementById("admin-notif-text").innerText = data.msg;
+            document.getElementById("admin-notif-modal").classList.remove("hidden");
         });
 
         socket.on("menu_updated", loadData);
