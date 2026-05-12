@@ -238,7 +238,54 @@ def admin_msg(data):
 def get_clients():
     if not session.get("admin"): return jsonify([])
     return jsonify(list(db.clients.find({}, {"_id": 0})))
+# Додай цей роут для страховки (якщо сокети підвиснуть)
+@app.route("/api/order_fallback", methods=["POST"])
+def order_fallback():
+    data = request.json
+    handle_create_order(data) # Викликаємо ту саму логіку
+    return jsonify({"status": "ok"})
 
+@socketio.on("create_order")
+def handle_create_order(data):
+    # Працюємо максимально швидко без зайвих блокувань
+    try:
+        order_id = int(datetime.now().timestamp())
+        
+        # Формуємо об'єкт замовлення
+        order = {
+            "id": order_id,
+            "client_id": data.get("client_id"),
+            "table": data.get("table"),
+            "items": [{
+                "uid": f"{order_id}_{i}",
+                "name": item.get("name"),
+                "price": item.get("price"),
+                "status": "В черзі"
+            } for i, item in enumerate(data.get("items", []))],
+            "comment": data.get("comment", ""),
+            "total": data.get("total", 0),
+            "status": "Активне",
+            "created": datetime.now().strftime("%H:%M")
+        }
+        
+        # Зберігаємо (MongoDB Atlas на безкоштовному тарифі може думати 1-2 сек, 
+        # але клієнт вже отримав повідомлення про успіх, тому йому пофіг)
+        db.orders.insert_one(order)
+        
+        # Оновлюємо клієнта
+        db.clients.update_one(
+            {"client_id": data.get("client_id")},
+            {"$push": {"orders": order_id}},
+            upsert=True
+        )
+        
+        # Сповіщаємо адміна
+        socketio.emit("new_order", order) # Передаємо саме замовлення, щоб адмінка не робила зайвих запитів
+        socketio.emit("clients_updated")
+        
+    except Exception as e:
+        print(f"Системна помилка: {e}")
+        
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     socketio.run(app, host="0.0.0.0", port=port)
