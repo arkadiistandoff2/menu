@@ -94,7 +94,7 @@
             <div class="w-12 h-12 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mx-auto mb-4">
                 <svg class="w-6 h-6 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
             </div>
-            <h2 class="text-2xl font-bold mb-2">Сповіщення</h2>
+            <h2 class="text-2xl font-bold mb-2">Повідомлення</h2>
             <p id="admin-notif-text" class="text-zinc-600 dark:text-zinc-400 mb-8 font-medium"></p>
             <button onclick="document.getElementById('admin-notif-modal').classList.add('hidden')" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-4 rounded-2xl font-bold shadow-lg transition">Зрозуміло</button>
         </div>
@@ -111,7 +111,6 @@
         let reviewRating = 0;
         let currentReviewOrderId = null;
 
-        // Міграція старого формату кошика в новий (з кількістю)
         let cart = [];
         try {
             const saved = JSON.parse(localStorage.getItem('cart')) || [];
@@ -166,7 +165,6 @@
 
             m.innerHTML = filtered.map(item => {
                 const imgSrc = item.image && item.image.startsWith('data:') ? item.image : (item.image ? `/static/images/${item.image}` : '');
-                // Передаємо лише ID, щоб лапки в описі не ламали код
                 return `
                 <div class="bg-white dark:bg-zinc-900 rounded-[32px] shadow-sm border border-zinc-100 dark:border-zinc-800 overflow-hidden flex flex-col">
                     <div class="h-52 bg-zinc-100 dark:bg-zinc-800 relative">
@@ -250,7 +248,6 @@
             btn.disabled = true;
             btn.innerHTML = "Відправка...";
 
-            // Розгортаємо замовлення, щоб на кухню падала кожна порція окремо (для статусів)
             const expandedItems = [];
             cart.forEach(item => {
                 for(let i=0; i<item.quantity; i++) expandedItems.push({name: item.name, price: item.price});
@@ -269,7 +266,7 @@
                     })
                 });
 
-                if(!res.ok) throw new Error("Помилка сервера");
+                if(!res.ok) throw new Error("Сервер повернув помилку");
 
                 const data = await res.json();
                 currentReviewOrderId = data.order_id;
@@ -278,9 +275,10 @@
                 updateCartUI();
                 toggleCart(false);
                 document.getElementById("order-comment").value = "";
-                showToast("Замовлення прийнято");
+                showToast("Замовлення прийнято!");
             } catch (e) {
-                showToast("Помилка зв'язку");
+                console.error("Помилка:", e);
+                showToast("Сталася помилка. Спробуйте ще раз.");
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = originalHtml;
@@ -305,7 +303,6 @@
             }, 2500);
         }
 
-        // Відгуки
         const stars = document.querySelectorAll("#star-rating span");
         stars.forEach(star => {
             star.addEventListener("click", (e) => {
@@ -337,7 +334,6 @@
             }
         });
 
-        // Слухаємо сповіщення від адміна
         socket.on("admin_message", (data) => {
             document.getElementById("admin-notif-text").innerText = data.msg;
             document.getElementById("admin-notif-modal").classList.remove("hidden");
