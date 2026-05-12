@@ -1,80 +1,13 @@
 from gevent import monkey
 monkey.patch_all()
 
-import os, json, uuid, certifi
-from datetime import datetime
-from flask import Flask, render_template, request, jsonify, redirect, session, Response
-from flask_socketio import SocketIO, emit, join_room
-from pymongo import MongoClient
-from werkzeug.local import LocalProxy
-
-app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "admin-power-key")
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
-
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "1111")
-UPLOAD_FOLDER = os.path.join("static", "images")
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-
-# Сховище для мапінгу Socket ID -> Client ID
-online_users = {}
-
-_db_client = None
-def get_db():
-    global _db_client
-    if _db_client is None:
-        uri = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
-        client = MongoClient(uri, tlsCAFile=certifi.where(), connect=False)
-        _db_client = client["restaurant_db"]
-    return _db_client
-
-db = LocalProxy(get_db)
-
-@app.route("/")
-def home(): return redirect("/1")
-
-@app.route("/<int:table_id>")
-def table(table_id): return render_template("index.html", table_id=table_id)
-
-@app.route("/admin")
-def admin():
-    if not session.get("admin"): return redirect("/login")
-    return render_template("admin.html")
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        if request.form.get("password") == ADMIN_PASSWORD:
-            session["admin"] = True
-            return redirect("/admin")
-    return render_template("login.html")
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect("/login")
-
-# API Секція
-@app.route("/api/categories")
-def get_cats(): return jsonify(list(db.categories.find({}, {"_id": 0})))
-
-@app.route("/api/category/add", methods=["POST"])
-def add_cat():
-    db.categories.insert_one({"id": int(datetime.now().timestamp()), "name": request.json["name"]})
-    socketio.emit("menu_updated"); return jsonify({"success": True})
-
-from gevent import monkey
-monkey.patch_all()
-
 import os
 import json
-import uuid
 import certifi
-import base64  # Для хранения картинок в базе
+import base64
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, redirect, session, Response
-from flask_socketio import SocketIO
+from flask_socketio import SocketIO, join_room
 from pymongo import MongoClient
 from werkzeug.local import LocalProxy
 
@@ -84,7 +17,7 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "1111")
 
-# --- ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ ---
+# --- ПІДКЛЮЧЕННЯ ДО БД ---
 _db_client = None
 
 def get_db():
@@ -103,7 +36,7 @@ def get_db():
 
 db = LocalProxy(get_db)
 
-# --- РОУТЫ КЛИЕНТА ---
+# --- РОУТИ ---
 @app.route("/")
 def home():
     return redirect("/1")
@@ -131,7 +64,7 @@ def login():
         return "<script>alert('Неправильний пароль'); window.location='/login';</script>"
     return render_template("login.html")
 
-# --- КАТЕГОРИИ И МЕНЮ ---
+# --- КАТЕГОРІЇ ТА МЕНЮ ---
 @app.route("/api/categories")
 def get_categories():
     return jsonify(list(db.categories.find({}, {"_id": 0})))
@@ -162,7 +95,6 @@ def add_menu():
     image_data = ""
     
     if image_file:
-        # Превращаем картинку в строку Base64 для хранения в MongoDB Atlas
         encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
         image_data = f"data:{image_file.mimetype};base64,{encoded_string}"
 
@@ -171,7 +103,7 @@ def add_menu():
         "name": request.form.get("name"),
         "description": request.form.get("description"),
         "price": request.form.get("price"),
-        "image": image_data, # Храним саму картинку, а не путь к файлу
+        "image": image_data,
         "category": request.form.get("category")
     })
     socketio.emit("menu_updated")
@@ -184,44 +116,47 @@ def delete_menu(item_id):
     socketio.emit("menu_updated")
     return jsonify({"success": True})
 
-# --- ЗАКАЗЫ ---
+# --- ЗАМОВЛЕННЯ ---
 @app.route("/api/order", methods=["POST"])
 def create_order():
-    data = request.json
-    order_id = int(datetime.now().timestamp())
-    items_with_meta = []
-    
-    for i, item in enumerate(data["items"]):
-        items_with_meta.append({
-            "uid": f"{order_id}_{i}",
-            "name": item["name"],
-            "price": item["price"],
-            "to_go": item.get("to_go", False),
-            "status": "В черзі"
-        })
+    try:
+        data = request.json
+        order_id = int(datetime.now().timestamp())
+        items_with_meta = []
+        
+        for i, item in enumerate(data.get("items", [])):
+            items_with_meta.append({
+                "uid": f"{order_id}_{i}",
+                "name": item.get("name"),
+                "price": item.get("price"),
+                "status": "В черзі"
+            })
 
-    order = {
-        "id": order_id,
-        "client_id": data.get("client_id", "Unknown"),
-        "table": data["table"],
-        "items": items_with_meta,
-        "comment": data.get("comment", ""),
-        "total": data["total"],
-        "status": "Активне",
-        "created": str(datetime.now().strftime("%H:%M"))
-    }
-    db.orders.insert_one(order)
-    
-    db.clients.update_one(
-        {"client_id": data.get("client_id")},
-        {"$push": {"orders": order_id}},
-        upsert=True
-    )
-    
-    del order["_id"]
-    socketio.emit("new_order", order)
-    socketio.emit("clients_updated")
-    return jsonify({"success": True, "order_id": order_id})
+        order = {
+            "id": order_id,
+            "client_id": data.get("client_id", "Unknown"),
+            "table": data.get("table", "1"),
+            "items": items_with_meta,
+            "comment": data.get("comment", ""),
+            "total": data.get("total", 0),
+            "status": "Активне",
+            "created": str(datetime.now().strftime("%H:%M"))
+        }
+        db.orders.insert_one(order)
+        
+        db.clients.update_one(
+            {"client_id": data.get("client_id")},
+            {"$push": {"orders": order_id}},
+            upsert=True
+        )
+        
+        del order["_id"]
+        socketio.emit("new_order", order)
+        socketio.emit("clients_updated")
+        return jsonify({"success": True, "order_id": order_id})
+    except Exception as e:
+        print(f"Помилка створення замовлення: {e}")
+        return jsonify({"error": "Server error", "details": str(e)}), 500
 
 @app.route("/api/orders")
 def get_orders():
@@ -243,7 +178,7 @@ def update_all_status():
     socketio.emit("notify_client", {"order_id": data["order_id"], "status": order["status"]})
     return jsonify({"success": True})
 
-# --- ОТЗЫВЫ ---
+# --- ВІДГУКИ ---
 @app.route("/api/review", methods=["POST"])
 def submit_review():
     data = request.json
@@ -265,11 +200,14 @@ def get_reviews():
         if order: rev["order"] = order
     return jsonify(reviews)
 
-# --- КЛИЕНТЫ ---
+# --- WEBSOCKET ТА КЛІЄНТИ ---
 @socketio.on("sync_client")
 def handle_sync_client(data):
-    ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     client_id = data.get("client_id")
+    if client_id:
+        join_room(client_id)  # Приєднуємо клієнта до його приватної кімнати
+        
+    ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     table_id = data.get("table_id")
     
     db.clients.update_one(
@@ -287,12 +225,16 @@ def handle_sync_client(data):
     )
     socketio.emit("clients_updated")
 
+@socketio.on("admin_send_message")
+def admin_msg(data):
+    socketio.emit("admin_message", {"msg": data["msg"]}, room=data["client_id"])
+
 @app.route("/api/clients")
 def get_clients():
     if not session.get("admin"): return jsonify([])
     return jsonify(list(db.clients.find({}, {"_id": 0})))
 
-# --- ЭКСПОРТ / ИМПОРТ ---
+# --- ЕКСПОРТ / ІМПОРТ ---
 @app.route("/api/export")
 def export_data():
     if not session.get("admin"): return "Unauthorized", 401
@@ -320,7 +262,7 @@ def import_data():
     socketio.emit("menu_updated")
     return jsonify({"success": True})
 
-# --- ИСПРАВЛЕННЫЙ ЗАПУСК ---
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     socketio.run(app, host="0.0.0.0", port=port)
+        
