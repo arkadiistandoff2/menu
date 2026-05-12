@@ -11,14 +11,16 @@
 <body class="bg-zinc-950 text-white min-h-screen flex items-center justify-center p-5">
 
     <div class="bg-zinc-900 p-8 rounded-3xl border border-zinc-800 w-full max-w-sm text-center shadow-2xl">
-        <div class="text-5xl mb-4">🔐</div>
+        <div class="w-16 h-16 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-6">
+            <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+        </div>
         <h1 class="text-3xl font-bold mb-2">Адмін Панель</h1>
         <p class="text-zinc-500 mb-8 font-semibold">Введіть пароль для доступу</p>
         
         <form method="POST" action="/login">
-            <input type="password" name="password" placeholder="Пароль..." required 
-                   class="w-full bg-zinc-800 text-white p-4 rounded-xl outline-none mb-4 border border-zinc-700 focus:border-blue-500 transition text-center text-lg tracking-widest">
-            <button type="submit" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-4 rounded-xl font-bold text-lg active:scale-95 transition">
+            <input type="password" name="password" placeholder="Пароль" required 
+                   class="w-full bg-zinc-800 text-white p-4 rounded-2xl outline-none mb-4 border border-zinc-700 focus:border-zinc-500 transition text-center text-xl tracking-widest font-bold">
+            <button type="submit" class="w-full bg-white hover:bg-zinc-200 text-black py-4 rounded-2xl font-bold text-lg active:scale-95 transition shadow-lg">
                 Увійти
             </button>
         </form>
@@ -26,4 +28,3 @@
 
 </body>
 </html>
-
