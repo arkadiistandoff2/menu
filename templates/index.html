@@ -246,7 +246,7 @@
             const btn = document.getElementById("send-order-btn");
             const originalHtml = btn.innerHTML;
             btn.disabled = true;
-            btn.innerHTML = "Відправка...";
+            btn.innerHTML = "Обробка...";
 
             const expandedItems = [];
             cart.forEach(item => {
@@ -266,7 +266,9 @@
                     })
                 });
 
-                if(!res.ok) throw new Error("Сервер повернув помилку");
+                if(!res.ok) {
+                    throw new Error("Сервер не відповідає (Код " + res.status + ")");
+                }
 
                 const data = await res.json();
                 currentReviewOrderId = data.order_id;
@@ -275,10 +277,10 @@
                 updateCartUI();
                 toggleCart(false);
                 document.getElementById("order-comment").value = "";
-                showToast("Замовлення прийнято!");
+                showToast("Замовлення успішно відправлено!");
             } catch (e) {
                 console.error("Помилка:", e);
-                showToast("Сталася помилка. Спробуйте ще раз.");
+                showToast("Помилка зв'язку. Спробуйте ще раз.");
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = originalHtml;
@@ -293,14 +295,14 @@
 
         function showToast(text) {
             const t = document.createElement("div");
-            t.className = "fixed top-8 left-1/2 -translate-x-1/2 bg-zinc-900/90 dark:bg-white/90 backdrop-blur text-white dark:text-black px-6 py-3 rounded-2xl shadow-xl font-bold z-[100] transition-all duration-300 opacity-0 scale-90 tracking-wide";
+            t.className = "fixed top-8 left-1/2 -translate-x-1/2 bg-zinc-900/90 dark:bg-white/90 backdrop-blur text-white dark:text-black px-6 py-3 rounded-2xl shadow-xl font-bold z-[100] transition-all duration-300 opacity-0 scale-90 tracking-wide whitespace-nowrap";
             t.innerText = text;
             document.body.appendChild(t);
             setTimeout(() => { t.classList.remove('opacity-0', 'scale-90'); }, 50);
             setTimeout(() => { 
                 t.classList.add('opacity-0', 'scale-90');
                 setTimeout(() => t.remove(), 300);
-            }, 2500);
+            }, 3000);
         }
 
         const stars = document.querySelectorAll("#star-rating span");
