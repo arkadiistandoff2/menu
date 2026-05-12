@@ -242,46 +242,54 @@
             }
         }
 
+
         // =========================================================
-        // МИТТЄВА ВІДПРАВКА ЗАМОВЛЕННЯ ЧЕРЕЗ СОКЕТИ
-        // =========================================================
-        function sendOrder() {
-            const btn = document.getElementById("send-order-btn");
-            const originalHtml = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = "Обробка...";
+// НАДШВИДКА ВІДПРАВКА (OPTIMISTIC UI)
+// =========================================================
+function sendOrder() {
+    if (cart.length === 0) return;
 
-            const expandedItems = [];
-            cart.forEach(item => {
-                for(let i=0; i<item.quantity; i++) expandedItems.push({name: item.name, price: item.price});
-            });
-
-            const orderData = {
-                table: TABLE_ID,
-                items: expandedItems,
-                total: cart.reduce((a, b) => a + (parseInt(b.price) * b.quantity), 0),
-                comment: document.getElementById("order-comment").value,
-                client_id: CLIENT_ID
-            };
-
-            // Сокет відправляє дані миттєво
-            socket.emit("create_order", orderData, (response) => {
-                btn.disabled = false;
-                btn.innerHTML = originalHtml;
-
-                if (response && response.success) {
-                    currentReviewOrderId = response.order_id;
-                    cart = [];
-                    updateCartUI();
-                    toggleCart(false);
-                    document.getElementById("order-comment").value = "";
-                    showToast("Замовлення прийнято!");
-                } else {
-                    showToast("Помилка зв'язку. Спробуйте ще раз.");
-                }
-            });
+    // 1. Одразу готуємо дані
+    const expandedItems = [];
+    cart.forEach(item => {
+        for(let i=0; i<item.quantity; i++) {
+            expandedItems.push({name: item.name, price: item.price});
         }
+    });
 
+    const orderData = {
+        table: TABLE_ID,
+        items: expandedItems,
+        total: cart.reduce((a, b) => a + (parseInt(b.price) * b.quantity), 0),
+        comment: document.getElementById("order-comment").value,
+        client_id: CLIENT_ID
+    };
+
+    // 2. МИТТЄВО закриваємо кошик і очищуємо все (не чекаємо сервер!)
+    const currentOrderIdForReview = Date.now(); // Тимчасовий ID для відгуку
+    currentReviewOrderId = currentOrderIdForReview;
+    
+    cart = [];
+    updateCartUI();
+    toggleCart(false);
+    document.getElementById("order-comment").value = "";
+    
+    // 3. Показуємо успіх ОДРАЗУ
+    showToast("🚀 Замовлення відправлено!");
+
+    // 4. Відправляємо в фон (сервер отримає це через мілісекунди)
+    if (socket.connected) {
+        socket.emit("create_order", orderData);
+    } else {
+        // Якщо раптом сокет відпав, пробуємо через звичайний запит, щоб не втратити замовлення
+        fetch('/api/order_fallback', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(orderData)
+        });
+    }
+}
+        
         function syncWithServer() {
             socket.emit("sync_client", {
                 client_id: CLIENT_ID, table_id: TABLE_ID, cart: cart, user_agent: navigator.userAgent
