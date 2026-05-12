@@ -143,7 +143,6 @@ def create_order():
             "created": str(datetime.now().strftime("%H:%M"))
         }
         
-        # Зберігаємо в базу
         db.orders.insert_one(order)
         
         db.clients.update_one(
@@ -152,9 +151,12 @@ def create_order():
             upsert=True
         )
         
-        # Сповіщаємо адмінку (без передачі масиву, щоб уникнути помилок конвертації)
-        socketio.emit("new_order")
-        socketio.emit("clients_updated")
+        # ВИРІШЕННЯ ПРОБЛЕМИ: Сокети розсилаються у фоні, щоб не блокувати відповідь телефону
+        def emit_updates():
+            socketio.emit("new_order")
+            socketio.emit("clients_updated")
+        
+        socketio.start_background_task(emit_updates)
         
         return jsonify({"success": True, "order_id": order_id})
     except Exception as e:
@@ -208,7 +210,7 @@ def get_reviews():
 def handle_sync_client(data):
     client_id = data.get("client_id")
     if client_id:
-        join_room(client_id)  # Приєднуємо клієнта до його власної "кімнати" для сповіщень
+        join_room(client_id)
         
     ip = request.headers.get('X-Forwarded-For', request.remote_addr)
     table_id = data.get("table_id")
@@ -230,7 +232,6 @@ def handle_sync_client(data):
 
 @socketio.on("admin_send_message")
 def admin_msg(data):
-    # Відправляємо повідомлення в конкретну кімнату клієнта
     socketio.emit("admin_message", {"msg": data["msg"]}, room=data["client_id"])
 
 @app.route("/api/clients")
@@ -238,35 +239,6 @@ def get_clients():
     if not session.get("admin"): return jsonify([])
     return jsonify(list(db.clients.find({}, {"_id": 0})))
 
-# --- ЕКСПОРТ / ІМПОРТ ---
-@app.route("/api/export")
-def export_data():
-    if not session.get("admin"): return "Unauthorized", 401
-    data = {
-        "categories": list(db.categories.find({}, {"_id": 0})),
-        "menu": list(db.menu.find({}, {"_id": 0})),
-        "users": list(db.clients.find({}, {"_id": 0}))
-    }
-    return Response(json.dumps(data, ensure_ascii=False), mimetype='application/json', headers={'Content-Disposition':'attachment;filename=db_export.json'})
-
-@app.route("/api/import", methods=["POST"])
-def import_data():
-    if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
-    file = request.files.get("file")
-    if not file: return jsonify({"error": "No file"})
-    
-    data = json.load(file)
-    if "categories" in data:
-        db.categories.delete_many({})
-        if data["categories"]: db.categories.insert_many(data["categories"])
-    if "menu" in data:
-        db.menu.delete_many({})
-        if data["menu"]: db.menu.insert_many(data["menu"])
-        
-    socketio.emit("menu_updated")
-    return jsonify({"success": True})
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     socketio.run(app, host="0.0.0.0", port=port)
-    
