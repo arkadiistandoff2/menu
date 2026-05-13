@@ -14,7 +14,7 @@
         }
     </script>
     <style>
-        body { font-family: 'Inter', sans-serif; padding-bottom: 90px; -webkit-tap-highlight-color: transparent; }
+        body { font-family: 'Inter', sans-serif; padding-bottom: 120px; -webkit-tap-highlight-color: transparent; }
         .slide-modal { transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
         .modal-hidden { transform: translateY(100%); }
         .modal-visible { transform: translateY(0); }
@@ -37,6 +37,12 @@
         <div id="categories" class="flex gap-2 overflow-x-auto no-scrollbar pb-6 mb-2"></div>
         <div id="menu" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
     </main>
+
+    <div class="fixed bottom-24 right-5 flex flex-col gap-3 z-40">
+        <button onclick="callWaiter()" class="w-14 h-14 bg-orange-500 text-white rounded-full shadow-2xl flex items-center justify-center text-2xl active:scale-90 transition">🛎️</button>
+        <button onclick="toggleSupport(true)" class="w-14 h-14 bg-blue-500 text-white rounded-full shadow-2xl flex items-center justify-center text-2xl active:scale-90 transition">💬</button>
+        <button onclick="toggleMyOrders(true)" class="w-14 h-14 bg-zinc-800 dark:bg-white dark:text-black text-white rounded-full shadow-2xl flex items-center justify-center text-2xl active:scale-90 transition">📋</button>
+    </div>
 
     <div class="fixed bottom-0 left-0 right-0 p-5 z-50 pointer-events-none">
         <button id="cart-btn" onclick="toggleCart(true)" class="hidden pointer-events-auto w-full max-w-md mx-auto bg-zinc-900 dark:bg-white text-white dark:text-black py-5 rounded-2xl font-bold shadow-2xl flex justify-between px-8 active:scale-95 transition-all">
@@ -68,7 +74,30 @@
         </div>
     </div>
 
-    <div id="review-modal" class="fixed inset-0 z-[70] hidden flex items-center justify-center p-5">
+    <div id="my-orders-modal" class="fixed inset-0 z-[60] hidden">
+        <div onclick="toggleMyOrders(false)" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
+        <div class="absolute bottom-0 left-0 right-0 bg-white dark:bg-zinc-950 rounded-t-[40px] p-8 h-[80vh] overflow-y-auto shadow-2xl slide-modal modal-hidden" id="my-orders-sheet">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-bold">Мої замовлення</h2>
+                <button onclick="toggleMyOrders(false)" class="text-zinc-400 font-bold text-xl">✕</button>
+            </div>
+            <div id="my-orders-list" class="space-y-4"></div>
+        </div>
+    </div>
+
+    <div id="support-modal" class="fixed inset-0 z-[70] hidden flex flex-col bg-white dark:bg-black">
+        <header class="p-5 border-b border-zinc-100 dark:border-zinc-800 flex justify-between items-center">
+            <h2 class="font-bold text-lg">Служба підтримки</h2>
+            <button onclick="toggleSupport(false)" class="text-zinc-400 font-bold text-xl">✕</button>
+        </header>
+        <div id="chat-box" class="flex-1 overflow-y-auto p-5 space-y-4 bg-zinc-50 dark:bg-zinc-900/30"></div>
+        <div class="p-5 border-t border-zinc-100 dark:border-zinc-800 flex gap-2">
+            <input id="chat-input" type="text" placeholder="Напишіть нам..." class="flex-1 bg-zinc-100 dark:bg-zinc-800 p-4 rounded-2xl outline-none">
+            <button onclick="sendChatMessage()" class="bg-blue-600 text-white px-6 rounded-2xl font-bold">🚀</button>
+        </div>
+    </div>
+
+    <div id="review-modal" class="fixed inset-0 z-[80] hidden flex items-center justify-center p-5">
         <div class="absolute inset-0 bg-black/60 backdrop-blur-md"></div>
         <div class="bg-white dark:bg-zinc-900 rounded-[35px] p-8 w-full max-w-sm relative z-10 text-center shadow-2xl">
             <h2 class="text-2xl font-bold mb-2">Оцініть обслуговування</h2>
@@ -129,9 +158,7 @@
                 renderCategories(await cRes.json());
                 renderMenu();
                 updateCartUI();
-            } catch (e) {
-                console.error("Помилка завантаження:", e);
-            }
+            } catch (e) { console.error("Помилка завантаження:", e); }
         }
 
         function toggleTheme() {
@@ -186,7 +213,6 @@
             const existing = cart.find(i => i.id === id);
             if(existing) existing.quantity += 1;
             else cart.push({...item, quantity: 1});
-            
             updateCartUI();
             showToast("Додано");
         }
@@ -224,9 +250,7 @@
                 </div>
             `).join("");
 
-            if (count === 0 && !document.getElementById("cart-modal").classList.contains("hidden")) {
-                toggleCart(false);
-            }
+            if (count === 0 && !document.getElementById("cart-modal").classList.contains("hidden")) toggleCart(false);
             syncWithServer();
         }
 
@@ -242,58 +266,116 @@
             }
         }
 
+        // =====================================
+        // НАДШВИДКА ВІДПРАВКА (Optimistic UI)
+        // =====================================
+        function sendOrder() {
+            if (cart.length === 0) return;
+            const expandedItems = [];
+            cart.forEach(item => { for(let i=0; i<item.quantity; i++) expandedItems.push({name: item.name, price: item.price}); });
 
-        // =========================================================
-// НАДШВИДКА ВІДПРАВКА (OPTIMISTIC UI)
-// =========================================================
-function sendOrder() {
-    if (cart.length === 0) return;
+            const orderData = {
+                table: TABLE_ID,
+                items: expandedItems,
+                total: cart.reduce((a, b) => a + (parseInt(b.price) * b.quantity), 0),
+                comment: document.getElementById("order-comment").value,
+                client_id: CLIENT_ID
+            };
 
-    // 1. Одразу готуємо дані
-    const expandedItems = [];
-    cart.forEach(item => {
-        for(let i=0; i<item.quantity; i++) {
-            expandedItems.push({name: item.name, price: item.price});
+            currentReviewOrderId = Date.now(); 
+            
+            cart = [];
+            updateCartUI();
+            toggleCart(false);
+            document.getElementById("order-comment").value = "";
+            showToast("🚀 Замовлення відправлено!");
+
+            if (socket.connected) socket.emit("create_order", orderData);
+            else fetch('/api/order_fallback', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(orderData) });
         }
-    });
 
-    const orderData = {
-        table: TABLE_ID,
-        items: expandedItems,
-        total: cart.reduce((a, b) => a + (parseInt(b.price) * b.quantity), 0),
-        comment: document.getElementById("order-comment").value,
-        client_id: CLIENT_ID
-    };
+        // =====================================
+        // КНОПКА ОФІЦІАНТА
+        // =====================================
+        function callWaiter() {
+            socket.emit("call_waiter", { table: TABLE_ID });
+            showToast("🛎️ Офіціант вже йде до вас!");
+        }
 
-    // 2. МИТТЄВО закриваємо кошик і очищуємо все (не чекаємо сервер!)
-    const currentOrderIdForReview = Date.now(); // Тимчасовий ID для відгуку
-    currentReviewOrderId = currentOrderIdForReview;
-    
-    cart = [];
-    updateCartUI();
-    toggleCart(false);
-    document.getElementById("order-comment").value = "";
-    
-    // 3. Показуємо успіх ОДРАЗУ
-    showToast("🚀 Замовлення відправлено!");
+                // =====================================
+        // МОЇ ЗАМОВЛЕННЯ
+        // =====================================
+        async function toggleMyOrders(show) {
+            const m = document.getElementById("my-orders-modal");
+            const s = document.getElementById("my-orders-sheet");
+            if(show) {
+                m.classList.remove("hidden");
+                setTimeout(() => s.classList.replace("modal-hidden", "modal-visible"), 10);
+                
+                const res = await fetch(`/api/my_orders/${CLIENT_ID}`);
+                const orders = await res.json();
+                document.getElementById("my-orders-list").innerHTML = orders.map(o => `
+                    <div class="p-5 bg-zinc-50 dark:bg-zinc-900 rounded-3xl border border-zinc-100 dark:border-zinc-800">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="font-bold text-lg">#${o.id.toString().slice(-4)}</span>
+                            <span class="text-blue-500 font-bold">${o.status}</span>
+                        </div>
+                        <div class="text-sm text-zinc-500 mb-3">${o.items.map(i => i.name).join(', ')}</div>
+                        <div class="font-black text-xl">${o.total} ₴</div>
+                    </div>
+                `).join('') || '<div class="text-center text-zinc-500 py-10 font-bold">У вас ще немає замовлень</div>';
+            } else {
+                s.classList.replace("modal-visible", "modal-hidden");
+                setTimeout(() => m.classList.add("hidden"), 300);
+            }
+        }
 
-    // 4. Відправляємо в фон (сервер отримає це через мілісекунди)
-    if (socket.connected) {
-        socket.emit("create_order", orderData);
-    } else {
-        // Якщо раптом сокет відпав, пробуємо через звичайний запит, щоб не втратити замовлення
-        fetch('/api/order_fallback', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(orderData)
+        // =====================================
+        // ЧАТ ПІДТРИМКИ
+        // =====================================
+        function toggleSupport(show) {
+            document.getElementById("support-modal").classList.toggle("hidden", !show);
+            if(show) loadChatHistory();
+        }
+
+        async function loadChatHistory() {
+            const res = await fetch(`/api/chat_history/${CLIENT_ID}`);
+            const history = await res.json();
+            document.getElementById("chat-box").innerHTML = "";
+            history.forEach(renderChatMessage);
+            const box = document.getElementById("chat-box");
+            box.scrollTop = box.scrollHeight;
+        }
+
+        function sendChatMessage() {
+            const input = document.getElementById("chat-input");
+            if(!input.value.trim()) return;
+            socket.emit("send_chat_msg", { client_id: CLIENT_ID, msg: input.value, sender: "client", table: TABLE_ID });
+            input.value = "";
+        }
+
+        socket.on("new_chat_msg", (data) => {
+            if(data.client_id === CLIENT_ID) {
+                renderChatMessage(data);
+                const box = document.getElementById("chat-box");
+                box.scrollTop = box.scrollHeight;
+            }
         });
-    }
-}
-        
+
+        function renderChatMessage(data) {
+            const isMe = data.sender === "client";
+            document.getElementById("chat-box").innerHTML += `
+                <div class="flex ${isMe ? 'justify-end' : 'justify-start'}">
+                    <div class="p-4 rounded-2xl max-w-[80%] text-sm ${isMe ? 'bg-blue-600 text-white rounded-br-none' : 'bg-zinc-200 dark:bg-zinc-800 rounded-bl-none'}">
+                        ${data.msg}
+                        <div class="text-[10px] opacity-50 mt-1 text-right">${data.time}</div>
+                    </div>
+                </div>
+            `;
+        }
+
         function syncWithServer() {
-            socket.emit("sync_client", {
-                client_id: CLIENT_ID, table_id: TABLE_ID, cart: cart, user_agent: navigator.userAgent
-            });
+            socket.emit("sync_client", { client_id: CLIENT_ID, table_id: TABLE_ID, cart: cart, user_agent: navigator.userAgent });
         }
 
         function showToast(text) {
@@ -302,10 +384,7 @@ function sendOrder() {
             t.innerText = text;
             document.body.appendChild(t);
             setTimeout(() => { t.classList.remove('opacity-0', 'scale-90'); }, 50);
-            setTimeout(() => { 
-                t.classList.add('opacity-0', 'scale-90');
-                setTimeout(() => t.remove(), 300);
-            }, 3000);
+            setTimeout(() => { t.classList.add('opacity-0', 'scale-90'); setTimeout(() => t.remove(), 300); }, 3000);
         }
 
         const stars = document.querySelectorAll("#star-rating span");
@@ -330,12 +409,16 @@ function sendOrder() {
                 body: JSON.stringify({ order_id: currentReviewOrderId, rating: reviewRating, text: document.getElementById("review-text").value })
             });
             closeReview();
-            showToast("Дякуємо");
+            showToast("Дякуємо!");
         }
 
+        // НАГАДУВАННЯ ПРО ВІДГУК
         socket.on("notify_client", (data) => {
             if (data.status === "Завершене" || data.status === "Завершено") {
                 document.getElementById("review-modal").classList.remove("hidden");
+                showToast("🌟 Не забудьте залишити відгук!");
+            } else {
+                showToast(`Статус замовлення змінено на: ${data.status}`);
             }
         });
 
