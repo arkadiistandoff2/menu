@@ -26,7 +26,10 @@
 
     <header class="sticky top-0 z-40 bg-white/80 dark:bg-black/80 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800 px-5 py-4">
         <div class="flex justify-between items-center max-w-2xl mx-auto">
-            <h1 class="text-2xl font-bold tracking-tight">Меню</h1>
+            <div>
+                <h1 class="text-2xl font-bold tracking-tight">Стіл #{{ table_id }}</h1>
+                <p class="text-xs text-zinc-500 font-semibold uppercase tracking-widest mt-1">Смачного відпочинку!</p>
+            </div>
             <button onclick="toggleTheme()" class="p-2 bg-zinc-100 dark:bg-zinc-900 rounded-full w-10 h-10 flex items-center justify-center">
                 <div id="theme-indicator" class="w-4 h-4 rounded-full border-2 border-current"></div>
             </button>
@@ -39,9 +42,18 @@
     </main>
 
     <div class="fixed bottom-24 right-5 flex flex-col gap-3 z-40">
-        <button onclick="callWaiter()" class="w-14 h-14 bg-orange-500 text-white rounded-full shadow-2xl flex items-center justify-center text-2xl active:scale-90 transition">🛎️</button>
-        <button onclick="toggleSupport(true)" class="w-14 h-14 bg-blue-500 text-white rounded-full shadow-2xl flex items-center justify-center text-2xl active:scale-90 transition">💬</button>
-        <button onclick="toggleMyOrders(true)" class="w-14 h-14 bg-zinc-800 dark:bg-white dark:text-black text-white rounded-full shadow-2xl flex items-center justify-center text-2xl active:scale-90 transition">📋</button>
+        <button onclick="callWaiter()" class="w-14 h-14 bg-orange-500 text-white rounded-full shadow-2xl flex items-center justify-center text-2xl active:scale-90 transition relative group">
+            🛎️
+            <span class="absolute right-full mr-4 bg-black/80 text-white text-xs px-3 py-1 rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap transition">Виклик офіціанта</span>
+        </button>
+        <button onclick="toggleSupport(true)" class="w-14 h-14 bg-blue-500 text-white rounded-full shadow-2xl flex items-center justify-center text-2xl active:scale-90 transition relative group">
+            💬
+            <span class="absolute right-full mr-4 bg-black/80 text-white text-xs px-3 py-1 rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap transition">Підтримка</span>
+        </button>
+        <button onclick="toggleMyOrders(true)" class="w-14 h-14 bg-zinc-800 dark:bg-white dark:text-black text-white rounded-full shadow-2xl flex items-center justify-center text-2xl active:scale-90 transition relative group">
+            📋
+            <span class="absolute right-full mr-4 bg-black/80 text-white text-xs px-3 py-1 rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap transition">Мої замовлення</span>
+        </button>
     </div>
 
     <div class="fixed bottom-0 left-0 right-0 p-5 z-50 pointer-events-none">
@@ -131,7 +143,7 @@
 
     <script>
         const socket = io();
-        const TABLE_ID = window.location.pathname.replace('/', '') || "1";
+        const TABLE_ID = "{{ table_id }}" || "1";
         const CLIENT_ID = localStorage.getItem('client_id') || 'cl_' + Math.random().toString(36).substr(2, 9);
         localStorage.setItem('client_id', CLIENT_ID);
 
@@ -214,7 +226,7 @@
             if(existing) existing.quantity += 1;
             else cart.push({...item, quantity: 1});
             updateCartUI();
-            showToast("Додано");
+            showToast("Додано у кошик");
         }
 
         function changeQuantity(id, delta) {
@@ -250,7 +262,9 @@
                 </div>
             `).join("");
 
-            if (count === 0 && !document.getElementById("cart-modal").classList.contains("hidden")) toggleCart(false);
+            if (count === 0 && !document.getElementById("cart-modal").classList.contains("hidden")) {
+                toggleCart(false);
+            }
             syncWithServer();
         }
 
@@ -266,9 +280,7 @@
             }
         }
 
-        // =====================================
-        // НАДШВИДКА ВІДПРАВКА (Optimistic UI)
-        // =====================================
+        // --- OPTIMISTIC UI SEND ORDER ---
         function sendOrder() {
             if (cart.length === 0) return;
             const expandedItems = [];
@@ -290,21 +302,18 @@
             document.getElementById("order-comment").value = "";
             showToast("🚀 Замовлення відправлено!");
 
-            if (socket.connected) socket.emit("create_order", orderData);
-            else fetch('/api/order_fallback', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(orderData) });
+            if (socket.connected) {
+                socket.emit("create_order", orderData);
+            } else {
+                fetch('/api/order_fallback', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(orderData) });
+            }
         }
 
-        // =====================================
-        // КНОПКА ОФІЦІАНТА
-        // =====================================
         function callWaiter() {
             socket.emit("call_waiter", { table: TABLE_ID });
             showToast("🛎️ Офіціант вже йде до вас!");
         }
 
-                // =====================================
-        // МОЇ ЗАМОВЛЕННЯ
-        // =====================================
         async function toggleMyOrders(show) {
             const m = document.getElementById("my-orders-modal");
             const s = document.getElementById("my-orders-sheet");
@@ -330,9 +339,6 @@
             }
         }
 
-        // =====================================
-        // ЧАТ ПІДТРИМКИ
-        // =====================================
         function toggleSupport(show) {
             document.getElementById("support-modal").classList.toggle("hidden", !show);
             if(show) loadChatHistory();
@@ -412,7 +418,6 @@
             showToast("Дякуємо!");
         }
 
-        // НАГАДУВАННЯ ПРО ВІДГУК
         socket.on("notify_client", (data) => {
             if (data.status === "Завершене" || data.status === "Завершено") {
                 document.getElementById("review-modal").classList.remove("hidden");
