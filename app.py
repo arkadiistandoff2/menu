@@ -10,16 +10,16 @@ from flask import Flask, render_template, request, jsonify, redirect, session, R
 from flask_socketio import SocketIO, join_room, emit
 from pymongo import MongoClient
 from werkzeug.local import LocalProxy
+from bson import ObjectId
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "softerx-default-key")
+app.secret_key = os.environ.get("SECRET_KEY", "softerx-ultra-key")
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
 
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "1111")
 
 # --- ПІДКЛЮЧЕННЯ ДО БД ---
 _db_client = None
-
 def get_db():
     global _db_client
     if _db_client is None:
@@ -36,7 +36,7 @@ def get_db():
 
 db = LocalProxy(get_db)
 
-# --- РОУТИ ---
+# --- БАЗОВІ РОУТИ ---
 @app.route("/")
 def home():
     return redirect("/1")
@@ -119,8 +119,7 @@ def delete_menu(item_id):
 # --- ЗАМОВЛЕННЯ ---
 @app.route("/api/order_fallback", methods=["POST"])
 def order_fallback():
-    data = request.json
-    handle_create_order(data)
+    handle_create_order(request.json)
     return jsonify({"status": "ok"})
 
 @socketio.on("create_order")
@@ -130,8 +129,8 @@ def handle_create_order(data):
         
         order = {
             "id": order_id,
-            "client_id": data.get("client_id"),
-            "table": data.get("table"),
+            "client_id": data.get("client_id", "Unknown"),
+            "table": data.get("table", "1"),
             "items": [{
                 "uid": f"{order_id}_{i}",
                 "name": item.get("name"),
@@ -156,7 +155,7 @@ def handle_create_order(data):
         socketio.emit("clients_updated")
         
     except Exception as e:
-        print(f"Системна помилка: {e}")
+        print(f"Помилка створення замовлення: {e}")
 
 @app.route("/api/orders")
 def get_orders():
@@ -186,7 +185,7 @@ def update_all_status():
 # --- ОФІЦІАНТ ТА ЧАТ ПІДТРИМКИ ---
 @socketio.on("call_waiter")
 def handle_call_waiter(data):
-    socketio.emit("waiter_alert", {"table": data.get("table")})
+    socketio.emit("waiter_alert", {"table": data.get("table"), "time": datetime.now().strftime("%H:%M")})
 
 @socketio.on("send_chat_msg")
 def handle_chat_msg(data):
@@ -202,7 +201,6 @@ def handle_chat_msg(data):
 
 @app.route("/api/chat_history/<client_id>")
 def get_chat_history(client_id):
-    if not session.get("admin") and not client_id: return jsonify([])
     history = list(db.support_chats.find({"client_id": client_id}, {"_id": 0}))
     return jsonify(history)
 
@@ -222,9 +220,10 @@ def submit_review():
 @app.route("/api/reviews")
 def get_reviews():
     if not session.get("admin"): return jsonify([])
-    reviews = list(db.reviews.find({}, {"_id": 0}))
+    reviews = list(db.reviews.find())
     for rev in reviews:
-        order = db.orders.find_one({"id": rev["order_id"]}, {"_id": 0})
+        rev["_id"] = str(rev["_id"])
+        order = db.orders.find_one({"id": rev.get("order_id")}, {"_id": 0})
         if order:
             rev["order_table"] = order.get("table", "?")
             rev["order_items"] = ", ".join([i['name'] for i in order.get('items', [])])
@@ -232,6 +231,13 @@ def get_reviews():
             rev["order_table"] = "?"
             rev["order_items"] = "Замовлення видалено"
     return jsonify(reviews)
+
+@app.route("/api/reviews/<id>", methods=["DELETE"])
+def delete_review(id):
+    if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
+    db.reviews.delete_one({"_id": ObjectId(id)})
+    socketio.emit("reviews_updated")
+    return jsonify({"status": "deleted"})
 
 # --- WEBSOCKET ТА КЛІЄНТИ ---
 @socketio.on("sync_client")
@@ -267,6 +273,32 @@ def get_clients():
     if not session.get("admin"): return jsonify([])
     return jsonify(list(db.clients.find({}, {"_id": 0})))
 
+# --- ЕКСПОРТ ТА СКИНУТИ БД ---
+@app.route("/api/export")
+def export_data():
+    if not session.get("admin"): return "Unauthorized", 401
+    data = {
+        "categories": list(db.categories.find({}, {"_id": 0})),
+        "menu": list(db.menu.find({}, {"_id": 0}))
+    }
+    return Response(json.dumps(data, ensure_ascii=False), mimetype='application/json', headers={'Content-Disposition':'attachment;filename=db_export.json'})
+
+@app.route("/api/admin/reset", methods=["POST"])
+def reset_db():
+    if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
+    if request.json.get("password") == "Zlata":
+        db.orders.delete_many({})
+        db.clients.delete_many({})
+        db.reviews.delete_many({})
+        db.menu.delete_many({})
+        db.categories.delete_many({})
+        db.support_chats.delete_many({})
+        socketio.emit("menu_updated")
+        socketio.emit("order_updated")
+        return jsonify({"status": "reset_done"})
+    return jsonify({"status": "wrong_password"}), 403
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     socketio.run(app, host="0.0.0.0", port=port)
+    
