@@ -18,7 +18,7 @@
         <h2 class="text-2xl font-bold mb-4">Деталі пристрою</h2>
         <div id="device-info-content" class="space-y-3 text-sm text-zinc-400 mb-8"></div>
         <div class="flex flex-col gap-3">
-            <button onclick="promptNotif()" class="bg-blue-600 hover:bg-blue-500 py-3 rounded-xl font-bold transition">Надіслати сповіщення</button>
+            <button onclick="promptNotif()" class="bg-blue-600 hover:bg-blue-500 py-3 rounded-xl font-bold transition">Надіслати сповіщення (Екран)</button>
             <button onclick="document.getElementById('device-modal').classList.add('hidden')" class="text-zinc-500 font-bold py-2">Закрити</button>
         </div>
     </div>
@@ -28,8 +28,9 @@
     <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 border-b border-zinc-800 pb-5 gap-4">
         <h1 class="text-3xl font-bold">Керування</h1>
         <div class="flex flex-wrap gap-2 bg-zinc-900 rounded-xl p-1 border border-zinc-800">
-            <button onclick="switchTab('products')" id="tab-btn-products" class="px-4 py-2 rounded-lg font-bold bg-zinc-800 text-white transition">Товари</button>
-            <button onclick="switchTab('orders')" id="tab-btn-orders" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Замовлення</button>
+            <button onclick="switchTab('orders')" id="tab-btn-orders" class="px-4 py-2 rounded-lg font-bold bg-zinc-800 text-white transition">Замовлення</button>
+            <button onclick="switchTab('products')" id="tab-btn-products" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Меню</button>
+            <button onclick="switchTab('chat')" id="tab-btn-chat" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Підтримка 💬</button>
             <button onclick="switchTab('reviews')" id="tab-btn-reviews" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Відгуки</button>
             <button onclick="switchTab('carts')" id="tab-btn-carts" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Пристрої</button>
         </div>
@@ -38,7 +39,9 @@
         </div>
     </div>
 
-    <div id="tab-products" class="grid md:grid-cols-3 gap-10">
+    <div id="tab-orders"><div id="orders" class="grid md:grid-cols-2 lg:grid-cols-3 gap-6"></div></div>
+
+    <div id="tab-products" class="hidden grid md:grid-cols-3 gap-10">
         <div class="md:col-span-1 space-y-6">
             <div class="bg-zinc-900 p-6 rounded-2xl border border-zinc-800">
                 <h2 class="text-xl font-bold mb-4">Новий товар</h2>
@@ -46,7 +49,7 @@
                 <textarea id="desc" placeholder="Опис" class="w-full mb-3 p-3 rounded-xl bg-zinc-800 outline-none h-24 focus:ring-1 ring-zinc-600"></textarea>
                 <input id="price" type="number" placeholder="Ціна" class="w-full mb-3 p-3 rounded-xl bg-zinc-800 outline-none focus:ring-1 ring-zinc-600">
                 <select id="category" class="w-full mb-3 p-3 rounded-xl bg-zinc-800 outline-none"></select>
-                <input id="image" type="file" class="w-full mb-5 p-2 rounded-xl bg-zinc-800 text-xs">
+                <input id="image" type="file" class="w-full mb-5 p-2 rounded-xl bg-zinc-800 text-xs text-zinc-500">
                 <button onclick="addMenu()" class="bg-zinc-100 hover:bg-white text-black w-full py-3 rounded-xl font-bold transition">Додати</button>
             </div>
             <div class="bg-zinc-900 p-6 rounded-2xl border border-zinc-800">
@@ -58,25 +61,38 @@
         <div class="md:col-span-2"><div id="products" class="grid md:grid-cols-2 gap-4"></div></div>
     </div>
 
-    <div id="tab-orders" class="hidden"><div id="orders" class="grid md:grid-cols-2 gap-6"></div></div>
+    <div id="tab-chat" class="hidden h-[70vh] flex flex-col md:flex-row gap-6">
+        <div id="chat-users-list" class="w-full md:w-64 bg-zinc-900 rounded-[30px] border border-zinc-800 p-4 overflow-y-auto space-y-2">
+            <h3 class="font-bold text-zinc-500 mb-4 px-2 uppercase text-xs tracking-widest">Діалоги</h3>
+        </div>
+        <div class="flex-1 bg-zinc-900 rounded-[30px] border border-zinc-800 flex flex-col p-6 overflow-hidden">
+            <div id="admin-chat-box" class="flex-1 overflow-y-auto space-y-4 mb-4"></div>
+            <div class="flex gap-2">
+                <input id="admin-chat-input" class="flex-1 bg-zinc-800 p-4 rounded-2xl outline-none" placeholder="Написати клієнту...">
+                <button onclick="sendAdminReply()" class="bg-blue-600 px-8 rounded-2xl font-bold">🚀</button>
+            </div>
+        </div>
+    </div>
+
     <div id="tab-reviews" class="hidden"><div id="reviews-list" class="grid md:grid-cols-2 gap-6"></div></div>
+    
     <div id="tab-carts" class="hidden"><div id="clients-list" class="grid md:grid-cols-2 lg:grid-cols-3 gap-6"></div></div>
 </div>
 
 <script>
 const socket = io({ transports: ["websocket"] });
-let MENU = [], CATEGORIES = [], currentSelectedClientId = null;
+let MENU = [], CATEGORIES = [], currentSelectedClientId = null, activeChatUser = null;
 
-function showToast(msg) {
+function showToast(msg, isAlert=false) {
     const t = document.createElement('div');
-    t.className = `bg-white text-black px-6 py-3 rounded-xl shadow-lg font-bold mb-2 transition`;
+    t.className = `${isAlert ? 'bg-orange-600' : 'bg-white text-black'} px-6 py-3 rounded-xl shadow-xl font-bold mb-2 transition`;
     t.innerText = msg;
     document.getElementById('toast-container').appendChild(t);
-    setTimeout(() => t.remove(), 3000);
+    setTimeout(() => t.remove(), isAlert ? 5000 : 3000);
 }
 
 function switchTab(tab) {
-    ['products', 'orders', 'reviews', 'carts'].forEach(t => {
+    ['products', 'orders', 'reviews', 'carts', 'chat'].forEach(t => {
         document.getElementById(`tab-${t}`).classList.add('hidden');
         document.getElementById(`tab-btn-${t}`).classList.replace('bg-zinc-800', 'text-zinc-400');
         document.getElementById(`tab-btn-${t}`).classList.replace('text-white', 'hover:text-white');
@@ -84,16 +100,19 @@ function switchTab(tab) {
     document.getElementById(`tab-${tab}`).classList.remove('hidden');
     document.getElementById(`tab-btn-${tab}`).classList.replace('text-zinc-400', 'bg-zinc-800');
     document.getElementById(`tab-btn-${tab}`).classList.add('text-white');
+    
     if(tab === 'carts') loadClients();
     if(tab === 'reviews') loadReviews();
+    if(tab === 'orders') loadOrders();
 }
 
 async function loadData() {
-    const [m, c, o] = await Promise.all([fetch("/api/menu"), fetch("/api/categories"), fetch("/api/orders")]);
+    const [m, c] = await Promise.all([fetch("/api/menu"), fetch("/api/categories")]);
     MENU = await m.json(); CATEGORIES = await c.json();
-    renderMenu(); renderCategories(); renderOrders(await o.json());
+    renderMenu(); renderCategories(); loadOrders();
 }
 
+// === КАТЕГОРІЇ ===
 function renderCategories() {
     document.getElementById("categoriesList").innerHTML = CATEGORIES.map(c => `
         <div class="flex justify-between bg-zinc-800 p-3 rounded-xl">
@@ -109,19 +128,22 @@ async function addCategory() {
 }
 async function deleteCategory(id) { await fetch("/api/category/delete/"+id, {method: "POST"}); }
 
+// === МЕНЮ (З КАРТИНКАМИ) ===
 function renderMenu() {
-    document.getElementById("products").innerHTML = MENU.map(i => `
-        <div class="bg-zinc-900 p-4 rounded-2xl border border-zinc-800 flex justify-between gap-4">
+    document.getElementById("products").innerHTML = MENU.map(i => {
+        const imgSrc = i.image && i.image.startsWith('data:') ? i.image : (i.image ? `/static/images/${i.image}` : '');
+        return `
+        <div class="bg-zinc-900 p-4 rounded-3xl border border-zinc-800 flex items-center gap-4">
+            <img src="${imgSrc || 'https://via.placeholder.com/100'}" class="w-16 h-16 rounded-2xl object-cover bg-zinc-800">
             <div class="flex-1">
                 <div class="text-[10px] uppercase text-zinc-500 font-bold mb-1">${i.category}</div>
-                <div class="font-bold text-lg">${i.name}</div>
-                <div class="text-xs text-zinc-400 line-clamp-1 mb-2">${i.description || ''}</div>
-                <div class="text-white font-bold bg-zinc-800 px-2 py-1 rounded w-max">${i.price} ₴</div>
+                <div class="font-bold">${i.name}</div>
+                <div class="text-white font-black">${i.price} ₴</div>
             </div>
-            <button onclick="deleteProduct(${i.id})" class="text-zinc-400 hover:text-red-500 bg-zinc-800 hover:bg-red-900/20 h-10 px-3 rounded-lg font-bold transition">Видалити</button>
-        </div>`).join("");
+            <button onclick="deleteProduct(${i.id})" class="text-zinc-500 hover:text-red-500 bg-zinc-800 hover:bg-red-900/20 w-12 h-12 rounded-xl font-bold transition">✕</button>
+        </div>`
+    }).join("");
 }
-
 async function addMenu() {
     const fd = new FormData();
     fd.append("name", document.getElementById("name").value);
@@ -134,28 +156,108 @@ async function addMenu() {
 }
 async function deleteProduct(id) { await fetch("/api/menu/delete/"+id, {method: "POST"}); }
 
-function renderOrders(orders) {
+// === ЗАМОВЛЕННЯ ===
+async function loadOrders() {
+    const res = await fetch("/api/orders");
+    const orders = await res.json();
     document.getElementById("orders").innerHTML = orders.reverse().map(o => `
-        <div class="bg-zinc-900 p-6 rounded-3xl border border-zinc-800">
-            <div class="flex justify-between items-center mb-4 border-b border-zinc-800 pb-4">
-                <span class="text-2xl font-bold">Стіл #${o.table}</span>
-                <span class="bg-white text-black px-3 py-1 rounded-full font-bold">${o.total} ₴</span>
+        <div class="bg-zinc-900 p-6 rounded-[30px] border border-zinc-800 flex flex-col">
+            <div class="flex justify-between items-start mb-4 border-b border-zinc-800 pb-4">
+                <span class="text-2xl font-black text-white">Стіл #${o.table}</span>
+                <span class="bg-blue-600 text-white px-3 py-1 rounded-lg text-xs font-bold">${o.created}</span>
             </div>
-            ${o.comment ? `<div class="bg-zinc-800 text-zinc-300 p-3 rounded-xl text-sm mb-4 italic">" ${o.comment} "</div>` : ''}
-            <div class="space-y-2 mb-6 text-sm">
-                ${o.items.map(i => `<div class="flex justify-between border-b border-zinc-800 pb-2">
+            ${o.comment ? `<div class="bg-zinc-800 text-zinc-300 p-4 rounded-2xl text-sm mb-4 italic">" ${o.comment} "</div>` : ''}
+            <div class="space-y-2 mb-6 text-sm flex-1">
+                ${o.items.map(i => `<div class="flex justify-between border-b border-zinc-800/50 pb-2">
                     <span class="font-medium">${i.name}</span>
                     <span class="text-zinc-500">${i.status}</span>
                 </div>`).join("")}
             </div>
-            <button onclick="setAllStatus(${o.id}, 'Завершене')" class="w-full bg-zinc-800 hover:bg-zinc-700 py-4 rounded-2xl font-bold active:scale-95 transition">Готово</button>
+            <div class="flex justify-between font-black text-xl mb-4"><span>Разом:</span><span>${o.total} ₴</span></div>
+            <div class="flex gap-2">
+                <button onclick="setAllStatus(${o.id}, 'Готується', '${o.client_id}')" class="flex-1 bg-zinc-800 hover:bg-zinc-700 py-4 rounded-2xl font-bold transition">Готується</button>
+                <button onclick="setAllStatus(${o.id}, 'Завершене', '${o.client_id}')" class="flex-1 bg-green-600 hover:bg-green-500 py-4 rounded-2xl font-bold transition">Видано</button>
+            </div>
         </div>`).join("");
 }
-async function setAllStatus(id, status) {
-    await fetch("/api/order/all_status", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({order_id: id, status: status}) });
+async function setAllStatus(id, status, client_id) {
+    await fetch("/api/order/all_status", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({order_id: id, status: status, client_id: client_id}) });
 }
 
-// Пристрої
+// === ЧАТ ПІДТРИМКИ ===
+socket.on('new_chat_msg', data => {
+    // Якщо написав клієнт і його ще немає в списку
+    if(data.sender === 'client') {
+        const userBtn = document.getElementById(`chat-user-${data.client_id}`);
+        if(!userBtn) {
+            const btn = `<button id="chat-user-${data.client_id}" onclick="openChat('${data.client_id}')" class="w-full text-left p-4 bg-zinc-800 hover:bg-zinc-700 rounded-2xl font-bold transition">Стіл #${data.table}</button>`;
+            document.getElementById('chat-users-list').insertAdjacentHTML('beforeend', btn);
+        }
+    }
+    // Якщо відкритий чат з цим клієнтом - малюємо
+    if(activeChatUser === data.client_id) {
+        renderChatMessage(data);
+        const box = document.getElementById('admin-chat-box');
+        box.scrollTop = box.scrollHeight;
+    }
+});
+
+async function openChat(clientId) {
+    activeChatUser = clientId;
+    // Виділяємо активного
+    document.querySelectorAll('[id^="chat-user-"]').forEach(btn => btn.classList.replace('bg-blue-600', 'bg-zinc-800'));
+    const btn = document.getElementById(`chat-user-${clientId}`);
+    if(btn) btn.classList.replace('bg-zinc-800', 'bg-blue-600');
+
+    const res = await fetch(`/api/chat_history/${clientId}`);
+    const history = await res.json();
+    document.getElementById('admin-chat-box').innerHTML = '';
+    history.forEach(renderChatMessage);
+    const box = document.getElementById('admin-chat-box');
+    box.scrollTop = box.scrollHeight;
+}
+
+function renderChatMessage(data) {
+    const isMe = data.sender === 'admin';
+    document.getElementById('admin-chat-box').innerHTML += `
+        <div class="flex ${isMe ? 'justify-end' : 'justify-start'}">
+            <div class="max-w-[70%] p-4 rounded-2xl ${isMe ? 'bg-blue-600 text-white rounded-br-none' : 'bg-zinc-800 rounded-bl-none'}">
+                <p class="text-sm">${data.msg}</p>
+                <div class="text-[10px] opacity-40 mt-1 ${isMe ? 'text-right' : ''}">${data.time}</div>
+            </div>
+        </div>
+    `;
+}
+
+function sendAdminReply() {
+    const input = document.getElementById('admin-chat-input');
+    if(!input.value.trim() || !activeChatUser) return;
+    socket.emit('send_chat_msg', { client_id: activeChatUser, msg: input.value, sender: 'admin' });
+    input.value = '';
+}
+
+// === ОФІЦІАНТ ===
+socket.on("waiter_alert", data => {
+    new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3').play().catch(()=>{});
+    showToast(`🛎️ ВИКЛИК ОФІЦІАНТА: СТІЛ #${data.table}`, true);
+});
+
+// === ВІДГУКИ (ПОКАЗУЄ СТІЛ І СТРАВИ) ===
+async function loadReviews() {
+    const res = await fetch("/api/reviews");
+    const reviews = await res.json();
+    document.getElementById("reviews-list").innerHTML = reviews.reverse().map(r => `
+        <div class="bg-zinc-900 p-6 rounded-[30px] border border-zinc-800">
+            <div class="flex justify-between items-center mb-3">
+                <span class="text-yellow-500 text-2xl tracking-widest">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</span>
+                <span class="bg-blue-900/30 text-blue-400 px-3 py-1 rounded-lg text-xs font-bold">Стіл #${r.order_table}</span>
+            </div>
+            <p class="italic mb-4 text-zinc-300 text-lg">"${r.text}"</p>
+            <div class="text-[10px] text-zinc-500 font-bold uppercase tracking-widest bg-zinc-950 p-3 rounded-xl">${r.order_items}</div>
+        </div>`).join("");
+}
+
+// === ПРИСТРОЇ ===
 async function loadClients() {
     const res = await fetch("/api/clients");
     const clients = await res.json();
@@ -174,7 +276,6 @@ async function loadClients() {
 
 function showDeviceInfo(c) {
     currentSelectedClientId = c.client_id;
-    // Враховуємо нову логіку кількості
     const cartHtml = c.cart && c.cart.length ? c.cart.map(i => `<div>- ${i.name} (${i.quantity || 1} шт.)</div>`).join('') : '<span class="text-zinc-600">Пусто</span>';
     
     const content = `
@@ -185,7 +286,7 @@ function showDeviceInfo(c) {
         <p><b>Відвідані столи:</b> ${c.tables_visited?.join(', ') || '-'}</p>
         <div class="mt-4 pt-4 border-t border-zinc-800">
             <b>Зараз у кошику:</b>
-            <div class="mt-2 space-y-1">${cartHtml}</div>
+            <div class="mt-2 space-y-1 font-bold">${cartHtml}</div>
         </div>
     `;
     document.getElementById("device-info-content").innerHTML = content;
@@ -193,7 +294,7 @@ function showDeviceInfo(c) {
 }
 
 function promptNotif() {
-    const msg = prompt("Введіть текст сповіщення (відобразиться у клієнта на екрані):");
+    const msg = prompt("Введіть текст сповіщення (випливе на екрані клієнта):");
     if(msg && msg.trim()) {
         socket.emit("admin_send_message", { client_id: currentSelectedClientId, msg: msg });
         showToast("Відправлено");
@@ -201,22 +302,13 @@ function promptNotif() {
     }
 }
 
-async function loadReviews() {
-    const res = await fetch("/api/reviews");
-    const reviews = await res.json();
-    document.getElementById("reviews-list").innerHTML = reviews.reverse().map(r => `
-        <div class="bg-zinc-900 p-5 rounded-3xl border border-zinc-800">
-            <div class="flex justify-between mb-2">
-                <span class="text-yellow-500 font-bold">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</span>
-                <span class="text-zinc-500 text-xs">${r.date}</span>
-            </div>
-            <p class="italic mb-4 text-zinc-200">"${r.text}"</p>
-            <div class="text-[10px] text-zinc-600">Стіл #${r.order?.table || '?'} | ${r.order?.items.map(i=>i.name).join(', ')}</div>
-        </div>`).join("");
-}
-
-socket.on("new_order", () => { showToast("Нове замовлення!"); loadData(); });
-socket.on("order_updated", loadData);
+// === СЛУХАЧІ СОКЕТІВ ===
+socket.on("new_order", () => { 
+    new Audio('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3').play().catch(()=>{});
+    showToast("🍔 Нове замовлення!"); 
+    loadOrders(); 
+});
+socket.on("order_updated", loadOrders);
 socket.on("menu_updated", loadData);
 socket.on("clients_updated", loadClients);
 socket.on("reviews_updated", loadReviews);
