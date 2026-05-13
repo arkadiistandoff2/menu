@@ -7,7 +7,7 @@ import certifi
 import base64
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, redirect, session, Response
-from flask_socketio import SocketIO, join_room
+from flask_socketio import SocketIO, join_room, emit
 from pymongo import MongoClient
 from werkzeug.local import LocalProxy
 
@@ -116,34 +116,32 @@ def delete_menu(item_id):
     socketio.emit("menu_updated")
     return jsonify({"success": True})
 
+# --- ЗАМОВЛЕННЯ ---
+@app.route("/api/order_fallback", methods=["POST"])
+def order_fallback():
+    data = request.json
+    handle_create_order(data)
+    return jsonify({"status": "ok"})
 
-# =========================================================
-# ВИРІШЕННЯ ПРОБЛЕМИ: Замовлення тепер приймаються по Сокетах
-# Це працює миттєво і ніколи не видасть "Помилку зв'язку"
-# =========================================================
 @socketio.on("create_order")
 def handle_create_order(data):
     try:
         order_id = int(datetime.now().timestamp())
-        items_with_meta = []
         
-        for i, item in enumerate(data.get("items", [])):
-            items_with_meta.append({
+        order = {
+            "id": order_id,
+            "client_id": data.get("client_id"),
+            "table": data.get("table"),
+            "items": [{
                 "uid": f"{order_id}_{i}",
                 "name": item.get("name"),
                 "price": item.get("price"),
                 "status": "В черзі"
-            })
-
-        order = {
-            "id": order_id,
-            "client_id": data.get("client_id", "Unknown"),
-            "table": data.get("table", "1"),
-            "items": items_with_meta,
+            } for i, item in enumerate(data.get("items", []))],
             "comment": data.get("comment", ""),
             "total": data.get("total", 0),
             "status": "Активне",
-            "created": str(datetime.now().strftime("%H:%M"))
+            "created": datetime.now().strftime("%H:%M")
         }
         
         db.orders.insert_one(order)
@@ -154,19 +152,21 @@ def handle_create_order(data):
             upsert=True
         )
         
-        socketio.emit("new_order")
+        socketio.emit("new_order", order) 
         socketio.emit("clients_updated")
         
-        # Відправляємо клієнту сигнал "Все супер!"
-        return {"success": True, "order_id": order_id}
     except Exception as e:
-        print(f"Помилка сокету: {e}")
-        return {"success": False, "error": str(e)}
+        print(f"Системна помилка: {e}")
 
 @app.route("/api/orders")
 def get_orders():
     if not session.get("admin"): return jsonify([])
     return jsonify(list(db.orders.find({"status": "Активне"}, {"_id": 0})))
+
+@app.route("/api/my_orders/<client_id>")
+def get_my_orders(client_id):
+    orders = list(db.orders.find({"client_id": client_id}, {"_id": 0}).sort("id", -1))
+    return jsonify(orders)
 
 @app.route("/api/order/all_status", methods=["POST"])
 def update_all_status():
@@ -180,8 +180,31 @@ def update_all_status():
     
     db.orders.replace_one({"id": data["order_id"]}, order)
     socketio.emit("order_updated")
-    socketio.emit("notify_client", {"order_id": data["order_id"], "status": order["status"]})
+    socketio.emit("notify_client", {"order_id": data["order_id"], "status": order["status"]}, room=order.get("client_id"))
     return jsonify({"success": True})
+
+# --- ОФІЦІАНТ ТА ЧАТ ПІДТРИМКИ ---
+@socketio.on("call_waiter")
+def handle_call_waiter(data):
+    socketio.emit("waiter_alert", {"table": data.get("table")})
+
+@socketio.on("send_chat_msg")
+def handle_chat_msg(data):
+    msg_obj = {
+        "client_id": data["client_id"],
+        "msg": data["msg"],
+        "sender": data["sender"],
+        "table": data.get("table", "?"),
+        "time": datetime.now().strftime("%H:%M")
+    }
+    db.support_chats.insert_one(msg_obj)
+    socketio.emit("new_chat_msg", msg_obj)
+
+@app.route("/api/chat_history/<client_id>")
+def get_chat_history(client_id):
+    if not session.get("admin") and not client_id: return jsonify([])
+    history = list(db.support_chats.find({"client_id": client_id}, {"_id": 0}))
+    return jsonify(history)
 
 # --- ВІДГУКИ ---
 @app.route("/api/review", methods=["POST"])
@@ -201,8 +224,13 @@ def get_reviews():
     if not session.get("admin"): return jsonify([])
     reviews = list(db.reviews.find({}, {"_id": 0}))
     for rev in reviews:
-        order = db.orders.find_one({"id": rev["order_id"]}, {"_id": 0, "items": 1, "table": 1})
-        if order: rev["order"] = order
+        order = db.orders.find_one({"id": rev["order_id"]}, {"_id": 0})
+        if order:
+            rev["order_table"] = order.get("table", "?")
+            rev["order_items"] = ", ".join([i['name'] for i in order.get('items', [])])
+        else:
+            rev["order_table"] = "?"
+            rev["order_items"] = "Замовлення видалено"
     return jsonify(reviews)
 
 # --- WEBSOCKET ТА КЛІЄНТИ ---
@@ -238,54 +266,7 @@ def admin_msg(data):
 def get_clients():
     if not session.get("admin"): return jsonify([])
     return jsonify(list(db.clients.find({}, {"_id": 0})))
-# Додай цей роут для страховки (якщо сокети підвиснуть)
-@app.route("/api/order_fallback", methods=["POST"])
-def order_fallback():
-    data = request.json
-    handle_create_order(data) # Викликаємо ту саму логіку
-    return jsonify({"status": "ok"})
 
-@socketio.on("create_order")
-def handle_create_order(data):
-    # Працюємо максимально швидко без зайвих блокувань
-    try:
-        order_id = int(datetime.now().timestamp())
-        
-        # Формуємо об'єкт замовлення
-        order = {
-            "id": order_id,
-            "client_id": data.get("client_id"),
-            "table": data.get("table"),
-            "items": [{
-                "uid": f"{order_id}_{i}",
-                "name": item.get("name"),
-                "price": item.get("price"),
-                "status": "В черзі"
-            } for i, item in enumerate(data.get("items", []))],
-            "comment": data.get("comment", ""),
-            "total": data.get("total", 0),
-            "status": "Активне",
-            "created": datetime.now().strftime("%H:%M")
-        }
-        
-        # Зберігаємо (MongoDB Atlas на безкоштовному тарифі може думати 1-2 сек, 
-        # але клієнт вже отримав повідомлення про успіх, тому йому пофіг)
-        db.orders.insert_one(order)
-        
-        # Оновлюємо клієнта
-        db.clients.update_one(
-            {"client_id": data.get("client_id")},
-            {"$push": {"orders": order_id}},
-            upsert=True
-        )
-        
-        # Сповіщаємо адміна
-        socketio.emit("new_order", order) # Передаємо саме замовлення, щоб адмінка не робила зайвих запитів
-        socketio.emit("clients_updated")
-        
-    except Exception as e:
-        print(f"Системна помилка: {e}")
-        
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     socketio.run(app, host="0.0.0.0", port=port)
