@@ -18,7 +18,7 @@
         <h2 class="text-2xl font-bold mb-4">Деталі пристрою</h2>
         <div id="device-info-content" class="space-y-3 text-sm text-zinc-400 mb-8"></div>
         <div class="flex flex-col gap-3">
-            <button onclick="promptNotif()" class="bg-blue-600 hover:bg-blue-500 py-3 rounded-xl font-bold transition">Надіслати сповіщення (Екран)</button>
+            <button onclick="promptNotif()" class="bg-blue-600 hover:bg-blue-500 py-3 rounded-xl font-bold transition">Надіслати сповіщення</button>
             <button onclick="document.getElementById('device-modal').classList.add('hidden')" class="text-zinc-500 font-bold py-2">Закрити</button>
         </div>
     </div>
@@ -33,13 +33,20 @@
             <button onclick="switchTab('chat')" id="tab-btn-chat" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Підтримка 💬</button>
             <button onclick="switchTab('reviews')" id="tab-btn-reviews" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Відгуки</button>
             <button onclick="switchTab('carts')" id="tab-btn-carts" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Пристрої</button>
+            <button onclick="switchTab('database')" id="tab-btn-database" class="px-4 py-2 rounded-lg font-bold text-red-500 hover:text-red-400 transition">Database</button>
         </div>
         <div class="flex gap-2">
             <a href="/logout" class="bg-red-900/30 hover:bg-red-800 px-4 py-2 rounded-xl text-sm font-bold text-red-400 transition">Вийти</a>
         </div>
     </div>
 
-    <div id="tab-orders"><div id="orders" class="grid md:grid-cols-2 lg:grid-cols-3 gap-6"></div></div>
+    <div id="tab-orders">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-2xl font-bold">Активні замовлення</h2>
+            <div class="bg-blue-500/10 text-blue-500 px-4 py-1 rounded-full text-sm font-semibold">Наживо</div>
+        </div>
+        <div id="orders" class="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10"></div>
+    </div>
 
     <div id="tab-products" class="hidden grid md:grid-cols-3 gap-10">
         <div class="md:col-span-1 space-y-6">
@@ -77,6 +84,27 @@
     <div id="tab-reviews" class="hidden"><div id="reviews-list" class="grid md:grid-cols-2 gap-6"></div></div>
     
     <div id="tab-carts" class="hidden"><div id="clients-list" class="grid md:grid-cols-2 lg:grid-cols-3 gap-6"></div></div>
+
+    <div id="tab-database" class="hidden">
+        <div class="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl">
+            <h2 class="text-2xl font-bold mb-6">Керування даними</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="p-6 border border-zinc-800 rounded-2xl bg-zinc-950">
+                    <h3 class="font-bold mb-4 text-zinc-400">Резервне копіювання</h3>
+                    <div class="flex gap-2">
+                        <a href="/api/export" class="bg-zinc-800 hover:bg-zinc-700 transition px-4 py-2 rounded-lg text-sm text-center flex-1">Експорт (JSON)</a>
+                    </div>
+                </div>
+                <div class="p-6 border border-red-900/30 rounded-2xl bg-red-900/10">
+                    <h3 class="font-bold mb-2 text-red-500">Небезпечна зона</h3>
+                    <p class="text-xs text-red-400/60 mb-4">Видалення всіх замовлень, відгуків, меню та чатів. Дія незворотна.</p>
+                    <button onclick="resetDatabase()" class="bg-red-600 hover:bg-red-700 px-6 py-2 rounded-xl font-bold transition w-full">
+                        Скинути все в НУЛЬ
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -85,21 +113,30 @@ let MENU = [], CATEGORIES = [], currentSelectedClientId = null, activeChatUser =
 
 function showToast(msg, isAlert=false) {
     const t = document.createElement('div');
-    t.className = `${isAlert ? 'bg-orange-600' : 'bg-white text-black'} px-6 py-3 rounded-xl shadow-xl font-bold mb-2 transition`;
+    t.className = `${isAlert ? 'bg-orange-600 text-white' : 'bg-white text-black'} px-6 py-3 rounded-xl shadow-xl font-bold mb-2 transition`;
     t.innerText = msg;
     document.getElementById('toast-container').appendChild(t);
     setTimeout(() => t.remove(), isAlert ? 5000 : 3000);
 }
 
 function switchTab(tab) {
-    ['products', 'orders', 'reviews', 'carts', 'chat'].forEach(t => {
+    ['products', 'orders', 'reviews', 'carts', 'chat', 'database'].forEach(t => {
         document.getElementById(`tab-${t}`).classList.add('hidden');
         document.getElementById(`tab-btn-${t}`).classList.replace('bg-zinc-800', 'text-zinc-400');
         document.getElementById(`tab-btn-${t}`).classList.replace('text-white', 'hover:text-white');
     });
     document.getElementById(`tab-${tab}`).classList.remove('hidden');
-    document.getElementById(`tab-btn-${tab}`).classList.replace('text-zinc-400', 'bg-zinc-800');
-    document.getElementById(`tab-btn-${tab}`).classList.add('text-white');
+    
+    // Стилізація кнопок (червона для Database)
+    if(tab === 'database') {
+        document.getElementById(`tab-btn-${tab}`).classList.replace('text-red-500', 'bg-red-600');
+        document.getElementById(`tab-btn-${tab}`).classList.add('text-white');
+    } else {
+        document.getElementById('tab-btn-database').classList.replace('bg-red-600', 'text-red-500');
+        document.getElementById('tab-btn-database').classList.remove('text-white');
+        document.getElementById(`tab-btn-${tab}`).classList.replace('text-zinc-400', 'bg-zinc-800');
+        document.getElementById(`tab-btn-${tab}`).classList.add('text-white');
+    }
     
     if(tab === 'carts') loadClients();
     if(tab === 'reviews') loadReviews();
@@ -128,7 +165,7 @@ async function addCategory() {
 }
 async function deleteCategory(id) { await fetch("/api/category/delete/"+id, {method: "POST"}); }
 
-// === МЕНЮ (З КАРТИНКАМИ) ===
+// === МЕНЮ (Редагування + Видалення) ===
 function renderMenu() {
     document.getElementById("products").innerHTML = MENU.map(i => {
         const imgSrc = i.image && i.image.startsWith('data:') ? i.image : (i.image ? `/static/images/${i.image}` : '');
@@ -140,7 +177,10 @@ function renderMenu() {
                 <div class="font-bold">${i.name}</div>
                 <div class="text-white font-black">${i.price} ₴</div>
             </div>
-            <button onclick="deleteProduct(${i.id})" class="text-zinc-500 hover:text-red-500 bg-zinc-800 hover:bg-red-900/20 w-12 h-12 rounded-xl font-bold transition">✕</button>
+            <div class="flex gap-2">
+                <button onclick="editProduct(${i.id})" class="text-zinc-400 hover:text-white bg-zinc-800 px-3 py-2 rounded-xl text-sm font-bold transition">Редаг.</button>
+                <button onclick="deleteProduct(${i.id})" class="text-zinc-500 hover:text-red-500 bg-zinc-800 hover:bg-red-900/20 w-10 h-10 rounded-xl font-bold transition">✕</button>
+            </div>
         </div>`
     }).join("");
 }
@@ -156,12 +196,30 @@ async function addMenu() {
 }
 async function deleteProduct(id) { await fetch("/api/menu/delete/"+id, {method: "POST"}); }
 
+function editProduct(id) {
+    const item = MENU.find(i => i.id === id);
+    if(!item) return;
+    const newPrice = prompt(`Введіть нову ціну для "${item.name}":`, item.price);
+    if(newPrice && !isNaN(newPrice)) {
+        // Ми видаляємо старий товар і додаємо копію з новою ціною (швидкий хак для редагування)
+        fetch("/api/menu/delete/"+id, {method: "POST"}).then(() => {
+            const fd = new FormData();
+            fd.append("name", item.name);
+            fd.append("description", item.description);
+            fd.append("price", newPrice);
+            fd.append("category", item.category);
+            fetch("/api/menu/add", { method: "POST", body: fd }); // Тут без картинки, краще зробити окремий ендпоінт для update
+        });
+        showToast("Товар оновлено!");
+    }
+}
+
 // === ЗАМОВЛЕННЯ ===
 async function loadOrders() {
     const res = await fetch("/api/orders");
     const orders = await res.json();
     document.getElementById("orders").innerHTML = orders.reverse().map(o => `
-        <div class="bg-zinc-900 p-6 rounded-[30px] border border-zinc-800 flex flex-col">
+        <div class="bg-zinc-900 p-6 rounded-[30px] border border-zinc-800 flex flex-col" id="order-card-${o.id}">
             <div class="flex justify-between items-start mb-4 border-b border-zinc-800 pb-4">
                 <span class="text-2xl font-black text-white">Стіл #${o.table}</span>
                 <span class="bg-blue-600 text-white px-3 py-1 rounded-lg text-xs font-bold">${o.created}</span>
@@ -182,11 +240,13 @@ async function loadOrders() {
 }
 async function setAllStatus(id, status, client_id) {
     await fetch("/api/order/all_status", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({order_id: id, status: status, client_id: client_id}) });
+    if (status === 'Завершене') {
+        document.getElementById(`order-card-${id}`).remove();
+    }
 }
 
 // === ЧАТ ПІДТРИМКИ ===
 socket.on('new_chat_msg', data => {
-    // Якщо написав клієнт і його ще немає в списку
     if(data.sender === 'client') {
         const userBtn = document.getElementById(`chat-user-${data.client_id}`);
         if(!userBtn) {
@@ -194,7 +254,6 @@ socket.on('new_chat_msg', data => {
             document.getElementById('chat-users-list').insertAdjacentHTML('beforeend', btn);
         }
     }
-    // Якщо відкритий чат з цим клієнтом - малюємо
     if(activeChatUser === data.client_id) {
         renderChatMessage(data);
         const box = document.getElementById('admin-chat-box');
@@ -204,7 +263,6 @@ socket.on('new_chat_msg', data => {
 
 async function openChat(clientId) {
     activeChatUser = clientId;
-    // Виділяємо активного
     document.querySelectorAll('[id^="chat-user-"]').forEach(btn => btn.classList.replace('bg-blue-600', 'bg-zinc-800'));
     const btn = document.getElementById(`chat-user-${clientId}`);
     if(btn) btn.classList.replace('bg-zinc-800', 'bg-blue-600');
@@ -239,22 +297,31 @@ function sendAdminReply() {
 // === ОФІЦІАНТ ===
 socket.on("waiter_alert", data => {
     new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3').play().catch(()=>{});
-    showToast(`🛎️ ВИКЛИК ОФІЦІАНТА: СТІЛ #${data.table}`, true);
+    showToast(`🛎️ ВИКЛИК ОФІЦІАНТА: СТІЛ #${data.table} (${data.time})`, true);
+    alert(`🛎️ ВИКЛИК ОФІЦІАНТА: СТІЛ #${data.table} (${data.time})`);
 });
 
-// === ВІДГУКИ (ПОКАЗУЄ СТІЛ І СТРАВИ) ===
+// === ВІДГУКИ (З ВИДАЛЕННЯМ) ===
 async function loadReviews() {
     const res = await fetch("/api/reviews");
     const reviews = await res.json();
     document.getElementById("reviews-list").innerHTML = reviews.reverse().map(r => `
-        <div class="bg-zinc-900 p-6 rounded-[30px] border border-zinc-800">
+        <div class="bg-zinc-900 p-6 rounded-[30px] border border-zinc-800 relative group">
             <div class="flex justify-between items-center mb-3">
                 <span class="text-yellow-500 text-2xl tracking-widest">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</span>
                 <span class="bg-blue-900/30 text-blue-400 px-3 py-1 rounded-lg text-xs font-bold">Стіл #${r.order_table}</span>
             </div>
             <p class="italic mb-4 text-zinc-300 text-lg">"${r.text}"</p>
             <div class="text-[10px] text-zinc-500 font-bold uppercase tracking-widest bg-zinc-950 p-3 rounded-xl">${r.order_items}</div>
+            <button onclick="deleteReview('${r._id}')" class="absolute top-4 right-4 bg-red-600 text-white w-8 h-8 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition">✕</button>
         </div>`).join("");
+}
+
+async function deleteReview(id) {
+    if(confirm("Видалити цей відгук?")) {
+        await fetch("/api/reviews/" + id, {method: "DELETE"});
+        loadReviews();
+    }
 }
 
 // === ПРИСТРОЇ ===
@@ -277,7 +344,6 @@ async function loadClients() {
 function showDeviceInfo(c) {
     currentSelectedClientId = c.client_id;
     const cartHtml = c.cart && c.cart.length ? c.cart.map(i => `<div>- ${i.name} (${i.quantity || 1} шт.)</div>`).join('') : '<span class="text-zinc-600">Пусто</span>';
-    
     const content = `
         <p><b>ID:</b> ${c.client_id}</p>
         <p><b>IP:</b> <span class="text-blue-400">${c.ip || 'Невідомо'}</span></p>
@@ -302,6 +368,29 @@ function promptNotif() {
     }
 }
 
+// === DATABASE RESET ===
+async function resetDatabase() {
+    const pass = prompt("Секретний пароль для СКИДАННЯ (Видалиться все!):");
+    if (pass === "Zlata") {
+        if(confirm("ВИ ВПЕВНЕНІ? Дія незворотна!")) {
+            const res = await fetch('/api/admin/reset', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({password: pass})
+            });
+            const data = await res.json();
+            if(data.status === "reset_done") {
+                alert("БАЗУ ОЧИЩЕНО!");
+                location.reload();
+            } else {
+                alert("Невірний пароль!");
+            }
+        }
+    } else if (pass !== null) {
+        alert("Невірний пароль!");
+    }
+}
+
 // === СЛУХАЧІ СОКЕТІВ ===
 socket.on("new_order", () => { 
     new Audio('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3').play().catch(()=>{});
@@ -313,7 +402,7 @@ socket.on("menu_updated", loadData);
 socket.on("clients_updated", loadClients);
 socket.on("reviews_updated", loadReviews);
 
-loadData();
+window.onload = loadData;
 </script>
 </body>
 </html>
