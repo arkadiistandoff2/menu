@@ -1,214 +1,271 @@
-from gevent import monkey
-monkey.patch_all()
-
-import os, json, uuid, certifi, base64
-from datetime import datetime
-from flask import Flask, render_template, request, jsonify, redirect, session, Response
+import os
+import sqlite3
+import logging
+from flask import Flask, render_template
 from flask_socketio import SocketIO, emit
-from pymongo import MongoClient
-from werkzeug.local import LocalProxy
+
+# Налаштування логування для відслідковування сокетів
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY", "super-secure-key-zlata")
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='gevent')
+app.config['SECRET_KEY'] = 'super_cafe_secure_key_2026'
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Zlata")
+DB_FILE = 'cafe.db'
 
-_db_client = None
-def get_db():
-    global _db_client
-    if _db_client is None:
-        uri = os.environ.get("MONGO_URI", "mongodb://localhost:27017/")
-        client = MongoClient(uri, tlsCAFile=certifi.where(), connect=False)
-        _db_client = client["restaurant_db"]
-    return _db_client
+def get_db_connection():
+    """Створення підключення до бази даних SQLite"""
+    conn = sqlite3.connect(DB_FILE)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-db = LocalProxy(get_db)
-
-# --- МАРШРУТИ ЗАСТОСУНКУ ---
-@app.route("/")
-def home(): 
-    return redirect("/1")
-
-@app.route("/<int:table_id>")
-def table(table_id): 
-    return render_template("index.html", table_id=table_id)
-
-@app.route("/admin")
-def admin():
-    if not session.get("admin"): 
-        return redirect("/login")
-    return render_template("admin.html")
-
-@app.route("/login", methods=["GET", "POST"])
-def login():
-    if request.method == "POST":
-        if request.form.get("password") == ADMIN_PASSWORD:
-            session["admin"] = True
-            return redirect("/admin")
-        return "<script>alert('Невірний пароль'); window.location='/login';</script>"
-    return render_template("login.html")
-
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect("/login")
-
-# --- API: КАТЕГОРІЇ ТА МЕНЮ ---
-@app.route("/api/categories")
-def get_categories(): 
-    return jsonify(list(db.categories.find({}, {"_id": 0})))
-
-@app.route("/api/categories/add", methods=["POST"])
-def add_category():
-    if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
-    name = request.json.get("name")
-    if name:
-        db.categories.update_one({"name": name}, {"$set": {"name": name}}, upsert=True)
-        socketio.emit("menu_updated")
-    return jsonify({"success": True})
-
-@app.route("/api/menu")
-def get_menu(): 
-    return jsonify(list(db.menu.find({}, {"_id": 0})))
-
-@app.route("/api/menu/add", methods=["POST"])
-def add_menu():
-    if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
+def init_db():
+    """Ініціалізація таблиць бази даних, якщо вони не існують"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
     
-    img = request.files.get("image")
-    img_base64 = ""
-    if img:
-        img_base64 = f"data:{img.mimetype};base64,{base64.b64encode(img.read()).decode('utf-8')}"
+    # Таблиця меню
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS menu (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            price REAL NOT NULL,
+            category TEXT NOT NULL
+        )
+    ''')
+    
+    # Таблиця замовлень
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS orders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            table_number TEXT NOT NULL,
+            total REAL NOT NULL,
+            status TEXT NOT NULL,
+            comment TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Таблиця зв'язку замовлення та страв
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS order_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id INTEGER NOT NULL,
+            item_name TEXT NOT NULL,
+            price REAL NOT NULL,
+            count INTEGER NOT NULL,
+            FOREIGN KEY (order_id) REFERENCES orders (id)
+        )
+    ''')
+    
+    # Заповнення дефолтного меню, якщо база порожня
+    cursor.execute("SELECT COUNT(*) FROM menu")
+    if cursor.fetchone()[0] == 0:
+        default_menu = [
+            ("Еспресо", 40.0, "Кава"),
+            ("Капучино", 55.0, "Кава"),
+            ("Лате Макіато", 65.0, "Кава"),
+            ("Круасан класичний", 45.0, "Випічка"),
+            ("Круасан з шоколадом", 60.0, "Випічка"),
+            ("Чізкейк Нью-Йорк", 75.0, "Десерти"),
+            ("Чай Зелений Сенча", 45.0, "Напої"),
+            ("Лимонад Класичний", 50.0, "Напої")
+        ]
+        cursor.executemany("INSERT INTO menu (name, price, category) VALUES (?, ?, ?)", default_menu)
+        conn.commit()
+        logging.info("Дефолтне меню успішно завантажено в базу даних.")
         
-    item_id = str(uuid.uuid4())[:8]
-    db.menu.insert_one({
-        "id": item_id,
-        "name": request.form.get("name"),
-        "price": float(request.form.get("price", 0)),
-        "description": request.form.get("description", ""),
-        "category": request.form.get("category"),
-        "image": img_base64
+    conn.close()
+
+# Виклик ініціалізації БД при старті
+init_db()
+
+def fetch_full_menu():
+    """Отримання всього меню з бази даних"""
+    conn = get_db_connection()
+    items = conn.execute("SELECT * FROM menu ORDER BY category, name").fetchall()
+    conn.close()
+    return [dict(item) for item in items]
+
+def fetch_active_orders():
+    """Отримання всіх активних та архівованих замовлень разом зі стравами"""
+    conn = get_db_connection()
+    orders_rows = conn.execute("SELECT * FROM orders ORDER BY id DESC").fetchall()
+    
+    full_orders = []
+    for o_row in orders_rows:
+        order_dict = dict(o_row)
+        items_rows = conn.execute(
+            "SELECT item_name, price, count FROM order_items WHERE order_id = ?", 
+            (order_dict['id'],)
+        ).fetchall()
+        order_dict['items'] = [dict(i) for i in items_rows]
+        full_orders.append(order_dict)
+        
+    conn.close()
+    return full_orders
+
+def calculate_live_stats():
+    """Просунутий розрахунок статистики закладу безпосередньо з SQL"""
+    conn = get_db_connection()
+    
+    total_revenue = conn.execute("SELECT SUM(total) FROM orders WHERE status = 'Завершено'").fetchone()[0] or 0.0
+    active_count = conn.execute("SELECT COUNT(*) FROM orders WHERE status != 'Завершено'").fetchone()[0] or 0
+    total_orders = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0] or 0
+    
+    top_item_row = conn.execute('''
+        SELECT item_name, SUM(count) as total_qty 
+        FROM order_items 
+        GROUP BY item_name 
+        ORDER BY total_qty DESC LIMIT 1
+    ''').fetchone()
+    
+    top_item = top_item_row['item_name'] if top_item_row else "Немає"
+    
+    conn.close()
+    return {
+        "revenue": round(total_revenue, 2),
+        "active_orders": active_count,
+        "total_orders": total_orders,
+        "top_item": top_item
+    }
+
+@app.route('/')
+def index():
+    """Рендеринг головної сторінки"""
+    return render_template('index.html')
+
+@socketio.on('connect')
+def handle_connect():
+    """Стрімінг усіх початкових даних клієнту при конекті"""
+    logging.info("Клієнт підключився до системи.")
+    emit('init_store', {
+        'menu': fetch_full_menu(),
+        'orders': fetch_active_orders(),
+        'stats': calculate_live_stats()
     })
-    socketio.emit("menu_updated")
-    return jsonify({"success": True})
 
-@app.route("/api/menu/edit", methods=["POST"])
-def edit_menu():
-    if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
-    
-    item_id = request.form.get("id")
-    update_data = {
-        "name": request.form.get("name"),
-        "price": float(request.form.get("price", 0)),
-        "description": request.form.get("description", ""),
-        "category": request.form.get("category")
-    }
-    
-    img = request.files.get("image")
-    if img:
-        update_data["image"] = f"data:{img.mimetype};base64,{base64.b64encode(img.read()).decode('utf-8')}"
-        
-    db.menu.update_one({"id": item_id}, {"$set": update_data})
-    socketio.emit("menu_updated")
-    return jsonify({"success": True})
-
-@app.route("/api/menu/delete/<item_id>", methods=["POST"])
-def delete_menu(item_id):
-    if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
-    db.menu.delete_one({"id": item_id})
-    socketio.emit("menu_updated")
-    return jsonify({"success": True})
-
-# --- API: ЗАМОВЛЕННЯ ---
-@app.route("/api/orders/active")
-def get_active_orders():
-    if not session.get("admin"): return jsonify([])
-    return jsonify(list(db.orders.find({"status": {"$ne": "Завершено"}}, {"_id": 0})))
-
-@app.route("/api/order", methods=["POST"])
-def create_order():
-    data = request.json
-    order_id = str(uuid.uuid4())[:6].upper()
-    
-    order = {
-        "id": order_id,
-        "table": data["table"],
-        "items": data["items"],
-        "total": float(data["total"]),
-        "status": "Нове",
-        "time": datetime.now().strftime("%H:%M:%S")
-    }
-    db.orders.insert_one(order)
-    order.pop("_id", None)
-    
-    socketio.emit("new_order", order)
-    return jsonify({"success": True, "order": order})
-
-# --- API: ІМПОРТ / ЕКСПОРТ ---
-@app.route("/api/export")
-def export_data():
-    if not session.get("admin"): return "Unauthorized", 401
-    data = {
-        "categories": list(db.categories.find({}, {"_id": 0})),
-        "menu": list(db.menu.find({}, {"_id": 0}))
-    }
-    return Response(
-        json.dumps(data, ensure_ascii=False, indent=2),
-        mimetype='application/json',
-        headers={'Content-Disposition': 'attachment;filename=restaurant_backup.json'}
-    )
-
-@app.route("/api/import", methods=["POST"])
-def import_data():
-    if not session.get("admin"): return jsonify({"error": "Unauthorized"}), 401
-    file = request.files.get("file")
-    if not file: return jsonify({"error": "Файл не знайдено"}), 400
-    
+@socketio.on('add_menu_item')
+def handle_add_menu_item(data):
+    """Додавання нової позиції в меню через веб-сокети"""
     try:
-        data = json.load(file)
-        if "categories" in data:
-            db.categories.delete_many({})
-            if data["categories"]: db.categories.insert_many(data["categories"])
-        if "menu" in data:
-            db.menu.delete_many({})
-            if data["menu"]: db.menu.insert_many(data["menu"])
+        name = data.get('name', '').strip()
+        price = float(data.get('price', 0))
+        category = data.get('category', 'Інше').strip()
+        
+        if not name or price <= 0:
+            emit('error_notification', {'message': 'Некоректні дані назви або ціни страв'})
+            return
             
-        socketio.emit("menu_updated")
-        return jsonify({"success": True})
+        conn = get_db_connection()
+        conn.execute("INSERT INTO menu (name, price, category) VALUES (?, ?, ?)", (name, price, category))
+        conn.commit()
+        conn.close()
+        
+        logging.info(f"Додано нову страву: {name} за {price}грн")
+        emit('menu_updated', fetch_full_menu(), broadcast=True)
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logging.error(f"Помилка додавання страви: {e}")
+        emit('error_notification', {'message': 'Сталася внутрішня помилка сервера.'})
 
-# --- SOCKET.IO: РЕАЛЬНИЙ ЧАС ТА СТРІМ СЕСІЙ ---
-@socketio.on("sync_client")
-def handle_sync_client(data):
-    client_id = data.get("client_id")
-    if not client_id: return
-    
-    ip = request.headers.get('X-Forwarded-For', request.remote_addr)
-    client_data = {
-        "client_id": client_id,
-        "table": data.get("table"),
-        "ip": ip,
-        "user_agent": request.headers.get("User-Agent", "Unknown"),
-        "cart": data.get("cart", []),
-        "current_view": data.get("current_view", "Все"),
-        "last_seen": datetime.now().strftime("%H:%M:%S")
-    }
-    db.clients.update_one({"client_id": client_id}, {"$set": client_data}, upsert=True)
-    
-    # Стрімінг активності в адмін панель в прямому ефірі
-    socketio.emit("live_client_update", client_data)
+@socketio.on('delete_menu_item')
+def handle_delete_menu_item(data):
+    """Видалення позиції з меню"""
+    try:
+        item_id = int(data.get('id', 0))
+        conn = get_db_connection()
+        conn.execute("DELETE FROM menu WHERE id = ?", (item_id,))
+        conn.commit()
+        conn.close()
+        
+        logging.info(f"Видалено страву з ID: {item_id}")
+        emit('menu_updated', fetch_full_menu(), broadcast=True)
+    except Exception as e:
+        logging.error(f"Помилка видалення страви: {e}")
 
-@socketio.on("call_waiter")
-def handle_waiter_call(data):
-    emit("waiter_called_admin", {"table": data["table"], "time": datetime.now().strftime("%H:%M:%S")}, broadcast=True)
+@socketio.on('create_order')
+def handle_create_order(data):
+    """Створення повноцінного чеку замовлення з транзакцією в БД"""
+    try:
+        table_num = data.get('table', 'На винос').strip()
+        comment = data.get('comment', '').strip()
+        cart_items = data.get('items', [])
+        
+        if not cart_items:
+            emit('error_notification', {'message': 'Неможливо створити порожнє замовлення!'})
+            return
+            
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # Обчислення загальної вартості на бекенді задля безпеки
+        total_price = 0.0
+        parsed_items = []
+        
+        for cart_item in cart_items:
+            menu_id = int(cart_item['id'])
+            count = int(cart_item['count'])
+            
+            db_item = cursor.execute("SELECT name, price FROM menu WHERE id = ?", (menu_id,)).fetchone()
+            if db_item:
+                cost = db_item['price'] * count
+                total_price += cost
+                parsed_items.append({
+                    'name': db_item['name'],
+                    'price': db_item['price'],
+                    'count': count
+                })
+                
+        # Вставка основного замовлення
+        cursor.execute(
+            "INSERT INTO orders (table_number, total, status, comment) VALUES (?, ?, 'Нове', ?)",
+            (table_num, total_price, comment)
+        )
+        order_id = cursor.lastrowid
+        
+        # Вставка кожної позиції чеку
+        for p_item in parsed_items:
+            cursor.execute(
+                "INSERT INTO order_items (order_id, item_name, price, count) VALUES (?, ?, ?, ?)",
+                (order_id, p_item['name'], p_item['price'], p_item['count'])
+            )
+            
+        conn.commit()
+        conn.close()
+        
+        logging.info(f"Створено нове замовлення #{order_id} для столу {table_num} на суму {total_price}грн")
+        
+        # Моментальний бродкаст оновлень усім підключеним клієнтам
+        emit('orders_updated', fetch_active_orders(), broadcast=True)
+        emit('stats_updated', calculate_live_stats(), broadcast=True)
+        emit('order_success_notification', {'id': order_id})
+        
+    except Exception as e:
+        logging.error(f"Помилка створення замовлення: {e}")
+        emit('error_notification', {'message': 'Помилка збереження транзакції замовлення.'})
 
-@socketio.on("change_order_status")
-def handle_status_change(data):
-    db.orders.update_one({"id": data["id"]}, {"$set": {"status": data["status"]}})
-    socketio.emit("order_status_updated", data)
+@socketio.on('change_order_status')
+def handle_change_order_status(data):
+    """Зміна поточного технологічного статусу замовлення"""
+    try:
+        order_id = int(data.get('id', 0))
+        new_status = data.get('status', '').strip()
+        
+        valid_statuses = ['Нове', 'Готується', 'Готово', 'Завершено']
+        if new_status not in valid_statuses:
+            return
+            
+        conn = get_db_connection()
+        conn.execute("UPDATE orders SET status = ? WHERE id = ?", (new_status, order_id))
+        conn.commit()
+        conn.close()
+        
+        logging.info(f"Замовлення #{order_id} переведено в статус: {new_status}")
+        
+        emit('orders_updated', fetch_active_orders(), broadcast=True)
+        emit('stats_updated', calculate_live_stats(), broadcast=True)
+    except Exception as e:
+        logging.error(f"Помилка зміни статусу замовлення: {e}")
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    socketio.run(app, host="0.0.0.0", port=port)
+if __name__ == '__main__':
+    socketio.run(app, debug=True, host='0.0.0.0', port=5000)
