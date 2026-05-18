@@ -3,406 +3,397 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Panel</title>
+    <title>Панель Управління</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-    <style>body { font-family: 'Inter', sans-serif; }</style>
 </head>
-<body class="bg-zinc-950 text-white min-h-screen">
-
-<div id="toast-container" class="fixed top-5 right-5 z-[100] flex flex-col gap-3 pointer-events-none"></div>
-
-<div id="device-modal" class="fixed inset-0 bg-black/80 z-[150] hidden flex items-center justify-center p-4 backdrop-blur-md">
-    <div class="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl w-full max-w-md shadow-2xl">
-        <h2 class="text-2xl font-bold mb-4">Деталі пристрою</h2>
-        <div id="device-info-content" class="space-y-3 text-sm text-zinc-400 mb-8"></div>
-        <div class="flex flex-col gap-3">
-            <button onclick="promptNotif()" class="bg-blue-600 hover:bg-blue-500 py-3 rounded-xl font-bold transition">Надіслати сповіщення</button>
-            <button onclick="document.getElementById('device-modal').classList.add('hidden')" class="text-zinc-500 font-bold py-2">Закрити</button>
-        </div>
-    </div>
-</div>
-
-<div class="p-5 md:p-10 max-w-7xl mx-auto">
-    <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 border-b border-zinc-800 pb-5 gap-4">
-        <h1 class="text-3xl font-bold">Керування</h1>
-        <div class="flex flex-wrap gap-2 bg-zinc-900 rounded-xl p-1 border border-zinc-800">
-            <button onclick="switchTab('orders')" id="tab-btn-orders" class="px-4 py-2 rounded-lg font-bold bg-zinc-800 text-white transition">Замовлення</button>
-            <button onclick="switchTab('products')" id="tab-btn-products" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Меню</button>
-            <button onclick="switchTab('chat')" id="tab-btn-chat" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Підтримка 💬</button>
-            <button onclick="switchTab('reviews')" id="tab-btn-reviews" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Відгуки</button>
-            <button onclick="switchTab('carts')" id="tab-btn-carts" class="px-4 py-2 rounded-lg font-bold text-zinc-400 hover:text-white transition">Пристрої</button>
-            <button onclick="switchTab('database')" id="tab-btn-database" class="px-4 py-2 rounded-lg font-bold text-red-500 hover:text-red-400 transition">Database</button>
-        </div>
-        <div class="flex gap-2">
-            <a href="/logout" class="bg-red-900/30 hover:bg-red-800 px-4 py-2 rounded-xl text-sm font-bold text-red-400 transition">Вийти</a>
-        </div>
-    </div>
-
-    <div id="tab-orders">
-        <div class="flex justify-between items-center mb-6">
-            <h2 class="text-2xl font-bold">Активні замовлення</h2>
-            <div class="bg-blue-500/10 text-blue-500 px-4 py-1 rounded-full text-sm font-semibold">Наживо</div>
-        </div>
-        <div id="orders" class="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-10"></div>
-    </div>
-
-    <div id="tab-products" class="hidden grid md:grid-cols-3 gap-10">
-        <div class="md:col-span-1 space-y-6">
-            <div class="bg-zinc-900 p-6 rounded-2xl border border-zinc-800">
-                <h2 class="text-xl font-bold mb-4">Новий товар</h2>
-                <input id="name" placeholder="Назва" class="w-full mb-3 p-3 rounded-xl bg-zinc-800 outline-none focus:ring-1 ring-zinc-600">
-                <textarea id="desc" placeholder="Опис" class="w-full mb-3 p-3 rounded-xl bg-zinc-800 outline-none h-24 focus:ring-1 ring-zinc-600"></textarea>
-                <input id="price" type="number" placeholder="Ціна" class="w-full mb-3 p-3 rounded-xl bg-zinc-800 outline-none focus:ring-1 ring-zinc-600">
-                <select id="category" class="w-full mb-3 p-3 rounded-xl bg-zinc-800 outline-none"></select>
-                <input id="image" type="file" class="w-full mb-5 p-2 rounded-xl bg-zinc-800 text-xs text-zinc-500">
-                <button onclick="addMenu()" class="bg-zinc-100 hover:bg-white text-black w-full py-3 rounded-xl font-bold transition">Додати</button>
+<body class="bg-zinc-950 text-white min-h-screen p-6 font-sans selection:bg-zinc-800">
+    <div class="max-w-7xl mx-auto">
+        
+        <!-- Шапка панелі -->
+        <header class="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-zinc-900 pb-6 mb-8 gap-4">
+            <div>
+                <h1 class="text-3xl font-black tracking-tight">ПАНЕЛЬ КЕРУВАННЯ</h1>
+                <p class="text-zinc-500 text-sm font-semibold mt-0.5">Всі процеси закладу в реальному часі</p>
             </div>
-            <div class="bg-zinc-900 p-6 rounded-2xl border border-zinc-800">
-                <input id="catName" placeholder="Назва категорії" class="w-full p-3 rounded-xl bg-zinc-800 mb-2 outline-none focus:ring-1 ring-zinc-600">
-                <button onclick="addCategory()" class="bg-zinc-800 hover:bg-zinc-700 w-full py-2 rounded-xl font-bold transition">Створити категорію</button>
-                <div id="categoriesList" class="space-y-2 mt-4"></div>
+            <button onclick="location.href='/logout'" class="bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white px-5 py-2.5 rounded-xl font-bold text-sm border border-zinc-800 transition">
+                Вихід
+            </button>
+        </header>
+
+        <!-- Навігаційні вкладки -->
+        <nav class="flex gap-2 border-b border-zinc-900 pb-4 mb-8 overflow-x-auto">
+            <button onclick="switchTab('orders')" id="tab-orders" class="px-5 py-3 rounded-xl font-extrabold text-sm transition tracking-tight shrink-0 bg-white text-black">Замовлення</button>
+            <button onclick="switchTab('menu')" id="tab-menu" class="px-5 py-3 rounded-xl font-extrabold text-sm transition tracking-tight shrink-0 bg-zinc-900 text-zinc-400">Меню закладу</button>
+            <button onclick="switchTab('live')" id="tab-live" class="px-5 py-3 rounded-xl font-extrabold text-sm transition tracking-tight shrink-0 bg-zinc-900 text-zinc-400">Користувачі</button>
+            <button onclick="switchTab('data')" id="tab-data" class="px-5 py-3 rounded-xl font-extrabold text-sm transition tracking-tight shrink-0 bg-zinc-900 text-zinc-400">Дані</button>
+        </nav>
+
+        <!-- ВКЛАДКА 1: ЗАМОВЛЕННЯ -->
+        <section id="sect-orders" class="space-y-6">
+            <h2 class="text-xl font-black tracking-tight text-zinc-400 uppercase text-xs tracking-widest">Активні замовлення</h2>
+            <div id="orders-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <!-- Замовлення з'являються тут -->
             </div>
-        </div>
-        <div class="md:col-span-2"><div id="products" class="grid md:grid-cols-2 gap-4"></div></div>
-    </div>
+        </section>
 
-    <div id="tab-chat" class="hidden h-[70vh] flex flex-col md:flex-row gap-6">
-        <div id="chat-users-list" class="w-full md:w-64 bg-zinc-900 rounded-[30px] border border-zinc-800 p-4 overflow-y-auto space-y-2">
-            <h3 class="font-bold text-zinc-500 mb-4 px-2 uppercase text-xs tracking-widest">Діалоги</h3>
-        </div>
-        <div class="flex-1 bg-zinc-900 rounded-[30px] border border-zinc-800 flex flex-col p-6 overflow-hidden">
-            <div id="admin-chat-box" class="flex-1 overflow-y-auto space-y-4 mb-4"></div>
-            <div class="flex gap-2">
-                <input id="admin-chat-input" class="flex-1 bg-zinc-800 p-4 rounded-2xl outline-none" placeholder="Написати клієнту...">
-                <button onclick="sendAdminReply()" class="bg-blue-600 px-8 rounded-2xl font-bold">🚀</button>
-            </div>
-        </div>
-    </div>
-
-    <div id="tab-reviews" class="hidden"><div id="reviews-list" class="grid md:grid-cols-2 gap-6"></div></div>
-    
-    <div id="tab-carts" class="hidden"><div id="clients-list" class="grid md:grid-cols-2 lg:grid-cols-3 gap-6"></div></div>
-
-    <div id="tab-database" class="hidden">
-        <div class="bg-zinc-900 border border-zinc-800 p-8 rounded-3xl">
-            <h2 class="text-2xl font-bold mb-6">Керування даними</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div class="p-6 border border-zinc-800 rounded-2xl bg-zinc-950">
-                    <h3 class="font-bold mb-4 text-zinc-400">Резервне копіювання</h3>
-                    <div class="flex gap-2">
-                        <a href="/api/export" class="bg-zinc-800 hover:bg-zinc-700 transition px-4 py-2 rounded-lg text-sm text-center flex-1">Експорт (JSON)</a>
-                    </div>
+        <!-- ВКЛАДКА 2: МЕНЮ ЗАКЛАДУ -->
+        <section id="sect-menu" class="hidden grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div class="lg:col-span-2 space-y-6">
+                <h2 class="text-xl font-black tracking-tight text-zinc-400 uppercase text-xs tracking-widest">Наявні страви</h2>
+                <div id="menu-items-container" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <!-- Картки страв меню -->
                 </div>
-                <div class="p-6 border border-red-900/30 rounded-2xl bg-red-900/10">
-                    <h3 class="font-bold mb-2 text-red-500">Небезпечна зона</h3>
-                    <p class="text-xs text-red-400/60 mb-4">Видалення всіх замовлень, відгуків, меню та чатів. Дія незворотна.</p>
-                    <button onclick="resetDatabase()" class="bg-red-600 hover:bg-red-700 px-6 py-2 rounded-xl font-bold transition w-full">
-                        Скинути все в НУЛЬ
+            </div>
+            
+            <!-- Форма швидкого створення страви -->
+            <div class="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl h-fit space-y-4">
+                <h2 class="text-lg font-black tracking-tight">Нова страва</h2>
+                <form id="add-item-form" class="space-y-3">
+                    <input type="text" name="name" placeholder="Назва страви" required class="w-full bg-zinc-800 border border-zinc-700 rounded-xl p-3 text-sm outline-none focus:border-zinc-500">
+                    <input type="number" step="0.01" name="price" placeholder="Ціна (₴)" required class="w-full bg-zinc-800 border border-zinc-700 rounded-xl p-3 text-sm outline-none focus:border-zinc-500">
+                    <input type="text" name="category" placeholder="Категорія" required class="w-full bg-zinc-800 border border-zinc-700 rounded-xl p-3 text-sm outline-none focus:border-zinc-500">
+                    <textarea name="description" placeholder="Короткий опис страви" class="w-full bg-zinc-800 border border-zinc-700 rounded-xl p-3 text-sm outline-none focus:border-zinc-500 h-20 resize-none"></textarea>
+                    <div class="relative border border-dashed border-zinc-700 hover:border-zinc-500 rounded-xl p-4 text-center cursor-pointer transition">
+                        <input type="file" name="image" class="absolute inset-0 opacity-0 cursor-pointer">
+                        <p class="text-xs text-zinc-500 font-bold">Оберіть або перетягніть фото</p>
+                    </div>
+                    <button type="submit" class="w-full bg-white text-black py-3.5 rounded-xl font-black text-sm transition active:scale-98 mt-2">
+                        Створити страву
+                    </button>
+                </form>
+
+                <div class="h-[1px] bg-zinc-800 my-4"></div>
+                <h2 class="text-sm font-black text-zinc-400 uppercase tracking-wider">Швидка категорія</h2>
+                <div class="flex gap-2">
+                    <input type="text" id="quick-cat-name" placeholder="Назва категорії" class="flex-grow bg-zinc-800 border border-zinc-700 rounded-xl p-3 text-sm outline-none">
+                    <button onclick="createCategory()" class="bg-zinc-800 text-white px-4 rounded-xl font-bold text-sm border border-zinc-700">Додати</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ВКЛАДКА 3: ЖИВИЙ МОНІТОРИНГ СЕСІЙ -->
+        <section id="sect-live" class="hidden space-y-6">
+            <h2 class="text-xl font-black tracking-tight text-zinc-400 uppercase text-xs tracking-widest">Прямий ефір сесій користувачів</h2>
+            <div id="live-clients-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <!-- Картки живого стрімінгу сесій клієнтів -->
+            </div>
+        </section>
+
+        <!-- ВКЛАДКА 4: ДАНІ ТА РЕЗЕРВНІ КОПІЇ -->
+        <section id="sect-data" class="hidden bg-zinc-900 border border-zinc-800 p-8 rounded-3xl max-w-2xl space-y-6">
+            <div>
+                <h2 class="text-xl font-black tracking-tight mb-1">Резервне копіювання</h2>
+                <p class="text-zinc-500 text-sm font-medium">Експортуйте або відновлюйте конфігурацію категорій та страв меню за секунди.</p>
+            </div>
+            
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+                <div class="bg-zinc-950 border border-zinc-800 p-5 rounded-2xl flex flex-col justify-between">
+                    <div>
+                        <h3 class="font-bold text-sm mb-1">Експорт бази даних</h3>
+                        <p class="text-zinc-500 text-xs leading-relaxed">Завантажити повний файл конфігурації у форматі JSON.</p>
+                    </div>
+                    <button onclick="location.href='/api/export'" class="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-bold text-xs py-3 rounded-xl mt-4 border border-zinc-700">
+                        Експортувати
                     </button>
                 </div>
+                
+                <div class="bg-zinc-950 border border-zinc-800 p-5 rounded-2xl flex flex-col justify-between">
+                    <div>
+                        <h3 class="font-bold text-sm mb-1">Імпорт бази даних</h3>
+                        <p class="text-zinc-500 text-xs leading-relaxed">Завантажити JSON файл для повного перезапису меню.</p>
+                    </div>
+                    <form id="import-form" class="mt-4 flex flex-col gap-2">
+                        <input type="file" id="import-file-input" required class="text-xs text-zinc-500 file:mr-2 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-zinc-800 file:text-white cursor-pointer">
+                        <button type="submit" class="w-full bg-white text-black font-black text-xs py-3 rounded-xl">
+                            Імпортувати дані
+                        </button>
+                    </form>
+                </div>
             </div>
+        </section>
+
+    </div>
+
+    <!-- МOДАЛЬНЕ ВІКНО РЕДАГУВАННЯ СТРАВИ (ПОВНИЙ CRUD ЗАМІСТЬ PROMPT) -->
+    <div id="edit-modal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4">
+        <div onclick="closeEditModal()" class="absolute inset-0 bg-black/80 backdrop-blur-sm"></div>
+        <div class="bg-zinc-900 border border-zinc-800 w-full max-w-lg p-6 rounded-3xl relative z-10 space-y-4">
+            <h2 class="text-lg font-black tracking-tight">Редагування страви</h2>
+            <form id="edit-item-form" class="space-y-3">
+                <input type="hidden" name="id" id="edit-item-id">
+                <div>
+                    <label class="text-zinc-500 text-[10px] font-bold uppercase tracking-wider pl-1">Назва страви</label>
+                    <input type="text" name="name" id="edit-item-name" required class="w-full bg-zinc-800 border border-zinc-700 rounded-xl p-3 text-sm outline-none focus:border-zinc-500 mt-1">
+                </div>
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="text-zinc-500 text-[10px] font-bold uppercase tracking-wider pl-1">Ціна (₴)</label>
+                        <input type="number" step="0.01" name="price" id="edit-item-price" required class="w-full bg-zinc-800 border border-zinc-700 rounded-xl p-3 text-sm outline-none focus:border-zinc-500 mt-1">
+                    </div>
+                    <div>
+                        <label class="text-zinc-500 text-[10px] font-bold uppercase tracking-wider pl-1">Категорія</label>
+                        <input type="text" name="category" id="edit-item-category" required class="w-full bg-zinc-800 border border-zinc-700 rounded-xl p-3 text-sm outline-none focus:border-zinc-500 mt-1">
+                    </div>
+                </div>
+                <div>
+                    <label class="text-zinc-500 text-[10px] font-bold uppercase tracking-wider pl-1">Опис страви</label>
+                    <textarea name="description" id="edit-item-description" class="w-full bg-zinc-800 border border-zinc-700 rounded-xl p-3 text-sm outline-none focus:border-zinc-500 h-20 resize-none mt-1"></textarea>
+                </div>
+                <div>
+                    <label class="text-zinc-500 text-[10px] font-bold uppercase tracking-wider pl-1">Змінити зображення (залиште порожнім, щоб зберегти поточне)</label>
+                    <div class="relative border border-dashed border-zinc-700 hover:border-zinc-500 rounded-xl p-4 text-center cursor-pointer transition mt-1">
+                        <input type="file" name="image" class="absolute inset-0 opacity-0 cursor-pointer">
+                        <p class="text-xs text-zinc-500 font-bold">Оберіть нове фото страви</p>
+                    </div>
+                </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="button" onclick="closeEditModal()" class="w-1/3 bg-zinc-800 text-zinc-400 font-bold py-3.5 rounded-xl text-sm border border-zinc-700">Скасувати</button>
+                    <button type="submit" class="w-2/3 bg-white text-black font-black py-3.5 rounded-xl text-sm transition active:scale-98">Зберегти зміни</button>
+                </div>
+            </form>
         </div>
     </div>
-</div>
 
-<script>
-const socket = io({ transports: ["websocket"] });
-let MENU = [], CATEGORIES = [], currentSelectedClientId = null, activeChatUser = null;
+    <script>
+        const socket = io();
+        const notificationSound = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
+        
+        let currentTab = "orders";
+        let activeOrders = [];
+        let menuItems = [];
+        let liveClients = {};
 
-function showToast(msg, isAlert=false) {
-    const t = document.createElement('div');
-    t.className = `${isAlert ? 'bg-orange-600 text-white' : 'bg-white text-black'} px-6 py-3 rounded-xl shadow-xl font-bold mb-2 transition`;
-    t.innerText = msg;
-    document.getElementById('toast-container').appendChild(t);
-    setTimeout(() => t.remove(), isAlert ? 5000 : 3000);
-}
-
-function switchTab(tab) {
-    ['products', 'orders', 'reviews', 'carts', 'chat', 'database'].forEach(t => {
-        document.getElementById(`tab-${t}`).classList.add('hidden');
-        document.getElementById(`tab-btn-${t}`).classList.replace('bg-zinc-800', 'text-zinc-400');
-        document.getElementById(`tab-btn-${t}`).classList.replace('text-white', 'hover:text-white');
-    });
-    document.getElementById(`tab-${tab}`).classList.remove('hidden');
-    
-    // Стилізація кнопок (червона для Database)
-    if(tab === 'database') {
-        document.getElementById(`tab-btn-${tab}`).classList.replace('text-red-500', 'bg-red-600');
-        document.getElementById(`tab-btn-${tab}`).classList.add('text-white');
-    } else {
-        document.getElementById('tab-btn-database').classList.replace('bg-red-600', 'text-red-500');
-        document.getElementById('tab-btn-database').classList.remove('text-white');
-        document.getElementById(`tab-btn-${tab}`).classList.replace('text-zinc-400', 'bg-zinc-800');
-        document.getElementById(`tab-btn-${tab}`).classList.add('text-white');
-    }
-    
-    if(tab === 'carts') loadClients();
-    if(tab === 'reviews') loadReviews();
-    if(tab === 'orders') loadOrders();
-}
-
-async function loadData() {
-    const [m, c] = await Promise.all([fetch("/api/menu"), fetch("/api/categories")]);
-    MENU = await m.json(); CATEGORIES = await c.json();
-    renderMenu(); renderCategories(); loadOrders();
-}
-
-// === КАТЕГОРІЇ ===
-function renderCategories() {
-    document.getElementById("categoriesList").innerHTML = CATEGORIES.map(c => `
-        <div class="flex justify-between bg-zinc-800 p-3 rounded-xl">
-            <span class="font-bold">${c.name}</span>
-            <button onclick="deleteCategory(${c.id})" class="text-zinc-500 hover:text-red-400 transition">✕</button>
-        </div>`).join("");
-    document.getElementById("category").innerHTML = CATEGORIES.map(c => `<option value="${c.name}">${c.name}</option>`).join("");
-}
-async function addCategory() {
-    const name = document.getElementById("catName").value;
-    await fetch("/api/category/add", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({name})});
-    document.getElementById("catName").value = "";
-}
-async function deleteCategory(id) { await fetch("/api/category/delete/"+id, {method: "POST"}); }
-
-// === МЕНЮ (Редагування + Видалення) ===
-function renderMenu() {
-    document.getElementById("products").innerHTML = MENU.map(i => {
-        const imgSrc = i.image && i.image.startsWith('data:') ? i.image : (i.image ? `/static/images/${i.image}` : '');
-        return `
-        <div class="bg-zinc-900 p-4 rounded-3xl border border-zinc-800 flex items-center gap-4">
-            <img src="${imgSrc || 'https://via.placeholder.com/100'}" class="w-16 h-16 rounded-2xl object-cover bg-zinc-800">
-            <div class="flex-1">
-                <div class="text-[10px] uppercase text-zinc-500 font-bold mb-1">${i.category}</div>
-                <div class="font-bold">${i.name}</div>
-                <div class="text-white font-black">${i.price} ₴</div>
-            </div>
-            <div class="flex gap-2">
-                <button onclick="editProduct(${i.id})" class="text-zinc-400 hover:text-white bg-zinc-800 px-3 py-2 rounded-xl text-sm font-bold transition">Редаг.</button>
-                <button onclick="deleteProduct(${i.id})" class="text-zinc-500 hover:text-red-500 bg-zinc-800 hover:bg-red-900/20 w-10 h-10 rounded-xl font-bold transition">✕</button>
-            </div>
-        </div>`
-    }).join("");
-}
-async function addMenu() {
-    const fd = new FormData();
-    fd.append("name", document.getElementById("name").value);
-    fd.append("description", document.getElementById("desc").value);
-    fd.append("price", document.getElementById("price").value);
-    fd.append("category", document.getElementById("category").value);
-    if(document.getElementById("image").files[0]) fd.append("image", document.getElementById("image").files[0]);
-    await fetch("/api/menu/add", { method: "POST", body: fd });
-    document.getElementById("name").value = ""; document.getElementById("desc").value = "";
-}
-async function deleteProduct(id) { await fetch("/api/menu/delete/"+id, {method: "POST"}); }
-
-function editProduct(id) {
-    const item = MENU.find(i => i.id === id);
-    if(!item) return;
-    const newPrice = prompt(`Введіть нову ціну для "${item.name}":`, item.price);
-    if(newPrice && !isNaN(newPrice)) {
-        // Ми видаляємо старий товар і додаємо копію з новою ціною (швидкий хак для редагування)
-        fetch("/api/menu/delete/"+id, {method: "POST"}).then(() => {
-            const fd = new FormData();
-            fd.append("name", item.name);
-            fd.append("description", item.description);
-            fd.append("price", newPrice);
-            fd.append("category", item.category);
-            fetch("/api/menu/add", { method: "POST", body: fd }); // Тут без картинки, краще зробити окремий ендпоінт для update
-        });
-        showToast("Товар оновлено!");
-    }
-}
-
-// === ЗАМОВЛЕННЯ ===
-async function loadOrders() {
-    const res = await fetch("/api/orders");
-    const orders = await res.json();
-    document.getElementById("orders").innerHTML = orders.reverse().map(o => `
-        <div class="bg-zinc-900 p-6 rounded-[30px] border border-zinc-800 flex flex-col" id="order-card-${o.id}">
-            <div class="flex justify-between items-start mb-4 border-b border-zinc-800 pb-4">
-                <span class="text-2xl font-black text-white">Стіл #${o.table}</span>
-                <span class="bg-blue-600 text-white px-3 py-1 rounded-lg text-xs font-bold">${o.created}</span>
-            </div>
-            ${o.comment ? `<div class="bg-zinc-800 text-zinc-300 p-4 rounded-2xl text-sm mb-4 italic">" ${o.comment} "</div>` : ''}
-            <div class="space-y-2 mb-6 text-sm flex-1">
-                ${o.items.map(i => `<div class="flex justify-between border-b border-zinc-800/50 pb-2">
-                    <span class="font-medium">${i.name}</span>
-                    <span class="text-zinc-500">${i.status}</span>
-                </div>`).join("")}
-            </div>
-            <div class="flex justify-between font-black text-xl mb-4"><span>Разом:</span><span>${o.total} ₴</span></div>
-            <div class="flex gap-2">
-                <button onclick="setAllStatus(${o.id}, 'Готується', '${o.client_id}')" class="flex-1 bg-zinc-800 hover:bg-zinc-700 py-4 rounded-2xl font-bold transition">Готується</button>
-                <button onclick="setAllStatus(${o.id}, 'Завершене', '${o.client_id}')" class="flex-1 bg-green-600 hover:bg-green-500 py-4 rounded-2xl font-bold transition">Видано</button>
-            </div>
-        </div>`).join("");
-}
-async function setAllStatus(id, status, client_id) {
-    await fetch("/api/order/all_status", { method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({order_id: id, status: status, client_id: client_id}) });
-    if (status === 'Завершене') {
-        document.getElementById(`order-card-${id}`).remove();
-    }
-}
-
-// === ЧАТ ПІДТРИМКИ ===
-socket.on('new_chat_msg', data => {
-    if(data.sender === 'client') {
-        const userBtn = document.getElementById(`chat-user-${data.client_id}`);
-        if(!userBtn) {
-            const btn = `<button id="chat-user-${data.client_id}" onclick="openChat('${data.client_id}')" class="w-full text-left p-4 bg-zinc-800 hover:bg-zinc-700 rounded-2xl font-bold transition">Стіл #${data.table}</button>`;
-            document.getElementById('chat-users-list').insertAdjacentHTML('beforeend', btn);
+        function switchTab(tab) {
+            currentTab = tab;
+            ['orders', 'menu', 'live', 'data'].forEach(t => {
+                document.getElementById(`sect-${t}`).classList.add('hidden');
+                document.getElementById(`tab-${t}`).className = "px-5 py-3 rounded-xl font-extrabold text-sm transition tracking-tight shrink-0 bg-zinc-900 text-zinc-400";
+            });
+            document.getElementById(`sect-${tab}`).classList.remove('hidden');
+            document.getElementById(`tab-${tab}`).className = "px-5 py-3 rounded-xl font-extrabold text-sm transition tracking-tight shrink-0 bg-white text-black";
         }
-    }
-    if(activeChatUser === data.client_id) {
-        renderChatMessage(data);
-        const box = document.getElementById('admin-chat-box');
-        box.scrollTop = box.scrollHeight;
-    }
-});
 
-async function openChat(clientId) {
-    activeChatUser = clientId;
-    document.querySelectorAll('[id^="chat-user-"]').forEach(btn => btn.classList.replace('bg-blue-600', 'bg-zinc-800'));
-    const btn = document.getElementById(`chat-user-${clientId}`);
-    if(btn) btn.classList.replace('bg-zinc-800', 'bg-blue-600');
+        async function init() {
+            await loadOrders();
+            await loadMenu();
+        }
 
-    const res = await fetch(`/api/chat_history/${clientId}`);
-    const history = await res.json();
-    document.getElementById('admin-chat-box').innerHTML = '';
-    history.forEach(renderChatMessage);
-    const box = document.getElementById('admin-chat-box');
-    box.scrollTop = box.scrollHeight;
-}
+        async function loadOrders() {
+            const res = await fetch('/api/orders/active');
+            activeOrders = await res.json();
+            renderOrders();
+        }
 
-function renderChatMessage(data) {
-    const isMe = data.sender === 'admin';
-    document.getElementById('admin-chat-box').innerHTML += `
-        <div class="flex ${isMe ? 'justify-end' : 'justify-start'}">
-            <div class="max-w-[70%] p-4 rounded-2xl ${isMe ? 'bg-blue-600 text-white rounded-br-none' : 'bg-zinc-800 rounded-bl-none'}">
-                <p class="text-sm">${data.msg}</p>
-                <div class="text-[10px] opacity-40 mt-1 ${isMe ? 'text-right' : ''}">${data.time}</div>
-            </div>
-        </div>
-    `;
-}
+        async function loadMenu() {
+            const res = await fetch('/api/menu');
+            menuItems = await res.json();
+            renderMenuItems();
+        }
 
-function sendAdminReply() {
-    const input = document.getElementById('admin-chat-input');
-    if(!input.value.trim() || !activeChatUser) return;
-    socket.emit('send_chat_msg', { client_id: activeChatUser, msg: input.value, sender: 'admin' });
-    input.value = '';
-}
+        function renderOrders() {
+            const container = document.getElementById("orders-container");
+            if (activeOrders.length === 0) {
+                container.innerHTML = `<div class="col-span-full text-center py-12 text-zinc-600 font-bold">Немає активних замовлень на цей момент</div>`;
+                return;
+            }
+            
+            container.innerHTML = activeOrders.map(o => `
+                <div class="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl flex flex-col justify-between shadow-xl">
+                    <div>
+                        <div class="flex justify-between items-center mb-3">
+                            <span class="bg-zinc-800 text-white font-black text-xs px-3 py-1 rounded-lg border border-zinc-700">Стіл #${o.table}</span>
+                            <span class="text-zinc-500 font-bold text-xs">${o.time}</span>
+                        </div>
+                        <p class="text-zinc-500 text-[10px] font-bold uppercase tracking-wider">Склад замовлення:</p>
+                        <ul class="text-sm font-bold text-zinc-200 mt-1 space-y-1 pl-1 border-l border-zinc-800">
+                            ${o.items.map(i => `<li>• ${i.name}</li>`).join('')}
+                        </ul>
+                        <p class="text-white font-black text-lg mt-4">${o.total} ₴</p>
+                    </div>
+                    
+                    <div class="grid grid-cols-3 gap-1.5 mt-5">
+                        <button onclick="changeStatus('${o.id}', 'Готується')" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2.5 rounded-xl font-bold text-xs border border-zinc-700 transition">Готується</button>
+                        <button onclick="changeStatus('${o.id}', 'Готово')" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-2.5 rounded-xl font-bold text-xs border border-zinc-700 transition">Готово</button>
+                        <button onclick="changeStatus('${o.id}', 'Завершено')" class="bg-white text-black py-2.5 rounded-xl font-black text-xs transition">Завершити</button>
+                    </div>
+                </div>
+            `).join('');
+        }
 
-// === ОФІЦІАНТ ===
-socket.on("waiter_alert", data => {
-    new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3').play().catch(()=>{});
-    showToast(`🛎️ ВИКЛИК ОФІЦІАНТА: СТІЛ #${data.table} (${data.time})`, true);
-    alert(`🛎️ ВИКЛИК ОФІЦІАНТА: СТІЛ #${data.table} (${data.time})`);
-});
+        function renderMenuItems() {
+            const container = document.getElementById("menu-items-container");
+            if (menuItems.length === 0) {
+                container.innerHTML = `<div class="col-span-full text-center py-12 text-zinc-600 font-bold">Меню закладу порожнє</div>`;
+                return;
+            }
+            
+            container.innerHTML = menuItems.map(m => `
+                <div class="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex gap-4 items-center justify-between">
+                    <div class="flex items-center gap-3 overflow-hidden">
+                        <div class="w-16 h-16 bg-zinc-950 rounded-xl border border-zinc-800 shrink-0 overflow-hidden flex items-center justify-center">
+                            ${m.image ? `<img src="${m.image}" class="w-full h-full object-cover">` : `<span class="text-[9px] text-zinc-600 font-bold uppercase">Фото</span>`}
+                        </div>
+                        <div class="overflow-hidden">
+                            <h3 class="font-bold text-sm text-white truncate">${m.name}</h3>
+                            <p class="text-zinc-500 text-xs font-semibold mt-0.5">${m.price} ₴ — <span class="text-zinc-600">${m.category}</span></p>
+                        </div>
+                    </div>
+                    <div class="flex gap-1 shrink-0">
+                        <button onclick="openEditModal('${m.id}')" class="bg-zinc-800 text-zinc-300 px-3 py-2 rounded-xl text-xs font-bold border border-zinc-700">Редагувати</button>
+                        <button onclick="deleteItem('${m.id}')" class="bg-zinc-950 text-red-500 px-3 py-2 rounded-xl text-xs font-bold border border-zinc-800">Видалити</button>
+                    </div>
+                </div>
+            `).join('');
+        }
 
-// === ВІДГУКИ (З ВИДАЛЕННЯМ) ===
-async function loadReviews() {
-    const res = await fetch("/api/reviews");
-    const reviews = await res.json();
-    document.getElementById("reviews-list").innerHTML = reviews.reverse().map(r => `
-        <div class="bg-zinc-900 p-6 rounded-[30px] border border-zinc-800 relative group">
-            <div class="flex justify-between items-center mb-3">
-                <span class="text-yellow-500 text-2xl tracking-widest">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</span>
-                <span class="bg-blue-900/30 text-blue-400 px-3 py-1 rounded-lg text-xs font-bold">Стіл #${r.order_table}</span>
-            </div>
-            <p class="italic mb-4 text-zinc-300 text-lg">"${r.text}"</p>
-            <div class="text-[10px] text-zinc-500 font-bold uppercase tracking-widest bg-zinc-950 p-3 rounded-xl">${r.order_items}</div>
-            <button onclick="deleteReview('${r._id}')" class="absolute top-4 right-4 bg-red-600 text-white w-8 h-8 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition">✕</button>
-        </div>`).join("");
-}
+        function changeStatus(orderId, newStatus) {
+            socket.emit("change_order_status", { id: orderId, status: newStatus });
+            activeOrders = activeOrders.map(o => o.id === orderId ? { ...o, status: newStatus } : o);
+            if (newStatus === "Завершено") {
+                activeOrders = activeOrders.filter(o => o.id !== orderId);
+            }
+            renderOrders();
+        }
 
-async function deleteReview(id) {
-    if(confirm("Видалити цей відгук?")) {
-        await fetch("/api/reviews/" + id, {method: "DELETE"});
-        loadReviews();
-    }
-}
-
-// === ПРИСТРОЇ ===
-async function loadClients() {
-    const res = await fetch("/api/clients");
-    const clients = await res.json();
-    document.getElementById("clients-list").innerHTML = clients.map(c => {
-        const isOnline = (new Date() - new Date(c.last_seen_raw || c.last_seen)) < 60000;
-        return `
-        <div class="bg-zinc-900 p-5 rounded-3xl border border-zinc-800">
-            <div class="flex justify-between items-start mb-4">
-                <div class="w-3 h-3 rounded-full ${isOnline ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]' : 'bg-zinc-700'}"></div>
-                <span class="text-[10px] text-zinc-500 font-mono">${c.client_id.substring(0,8)}</span>
-            </div>
-            <div class="font-bold mb-1">${isOnline ? 'Зараз на сайті' : 'Був: ' + c.last_seen}</div>
-            <button onclick='showDeviceInfo(${JSON.stringify(c)})' class="w-full mt-4 bg-zinc-800 hover:bg-zinc-700 py-3 rounded-xl text-sm font-bold transition">Деталі</button>
-        </div>`}).join("");
-}
-
-function showDeviceInfo(c) {
-    currentSelectedClientId = c.client_id;
-    const cartHtml = c.cart && c.cart.length ? c.cart.map(i => `<div>- ${i.name} (${i.quantity || 1} шт.)</div>`).join('') : '<span class="text-zinc-600">Пусто</span>';
-    const content = `
-        <p><b>ID:</b> ${c.client_id}</p>
-        <p><b>IP:</b> <span class="text-blue-400">${c.ip || 'Невідомо'}</span></p>
-        <p><b>Останній захід:</b> ${c.last_seen}</p>
-        <p class="text-xs text-zinc-500"><b>Пристрій:</b> ${c.user_agent || 'Невідомо'}</p>
-        <p><b>Відвідані столи:</b> ${c.tables_visited?.join(', ') || '-'}</p>
-        <div class="mt-4 pt-4 border-t border-zinc-800">
-            <b>Зараз у кошику:</b>
-            <div class="mt-2 space-y-1 font-bold">${cartHtml}</div>
-        </div>
-    `;
-    document.getElementById("device-info-content").innerHTML = content;
-    document.getElementById("device-modal").classList.remove("hidden");
-}
-
-function promptNotif() {
-    const msg = prompt("Введіть текст сповіщення (випливе на екрані клієнта):");
-    if(msg && msg.trim()) {
-        socket.emit("admin_send_message", { client_id: currentSelectedClientId, msg: msg });
-        showToast("Відправлено");
-        document.getElementById('device-modal').classList.add('hidden');
-    }
-}
-
-// === DATABASE RESET ===
-async function resetDatabase() {
-    const pass = prompt("Секретний пароль для СКИДАННЯ (Видалиться все!):");
-    if (pass === "Zlata") {
-        if(confirm("ВИ ВПЕВНЕНІ? Дія незворотна!")) {
-            const res = await fetch('/api/admin/reset', {
+        async function createCategory() {
+            const nameInput = document.getElementById("quick-cat-name");
+            if (!nameInput.value.trim()) return;
+            
+            await fetch('/api/categories/add', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({password: pass})
+                body: JSON.stringify({ name: nameInput.value.trim() })
             });
-            const data = await res.json();
-            if(data.status === "reset_done") {
-                alert("БАЗУ ОЧИЩЕНО!");
-                location.reload();
-            } else {
-                alert("Невірний пароль!");
-            }
+            nameInput.value = "";
+            alert("Категорію успішно збережено");
         }
-    } else if (pass !== null) {
-        alert("Невірний пароль!");
-    }
-}
 
-// === СЛУХАЧІ СОКЕТІВ ===
-socket.on("new_order", () => { 
-    new Audio('https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3').play().catch(()=>{});
-    showToast("🍔 Нове замовлення!"); 
-    loadOrders(); 
-});
-socket.on("order_updated", loadOrders);
-socket.on("menu_updated", loadData);
-socket.on("clients_updated", loadClients);
-socket.on("reviews_updated", loadReviews);
+        document.getElementById('add-item-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const res = await fetch('/api/menu/add', { method: 'POST', body: formData });
+            if (res.ok) {
+                e.target.reset();
+                loadMenu();
+                alert("Страву додано в базу страв меню!");
+            }
+        };
 
-window.onload = loadData;
-</script>
+        async function deleteItem(id) {
+            if (!confirm("Ви впевнені, що хочете видалити страву?")) return;
+            const res = await fetch(`/api/menu/delete/${id}`, { method: 'POST' });
+            if (res.ok) loadMenu();
+        }
+
+        // КЕРУВАННЯ МОДАЛЬНИМ ВІКНОМ РЕДАГУВАННЯ
+        function openEditModal(id) {
+            const match = menuItems.find(m => m.id === id);
+            if (!match) return;
+            
+            document.getElementById("edit-item-id").value = match.id;
+            document.getElementById("edit-item-name").value = match.name;
+            document.getElementById("edit-item-price").value = match.price;
+            document.getElementById("edit-item-category").value = match.category;
+            document.getElementById("edit-item-description").value = match.description || "";
+            
+            document.getElementById("edit-modal").classList.remove("hidden");
+        }
+
+        function closeEditModal() { document.getElementById("edit-modal").classList.add("hidden"); }
+
+        document.getElementById('edit-item-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.target);
+            const res = await fetch('/api/menu/edit', { method: 'POST', body: formData });
+            if (res.ok) {
+                closeEditModal();
+                loadMenu();
+                alert("Зміни успішно збережено в базі!");
+            }
+        };
+
+        // ІМПОРТ ДАНИХ БАЗИ JSON
+        document.getElementById('import-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const fileInput = document.getElementById('import-file-input');
+            if (fileInput.files.length === 0) return;
+            
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            
+            const res = await fetch('/api/import', { method: 'POST', body: formData });
+            if (res.ok) {
+                fileInput.value = "";
+                init();
+                alert("Базу даних успішно імпортовано та перезаписано!");
+            } else {
+                alert("Помилка при зчитуванні структури файлу");
+            }
+        };
+
+        // ЖИВИЙ МОНІТОРИНГ СЕСІЙ В КОРЗИНАХ (ПРЯМИЙ ЕФІР)
+        function renderLiveClients() {
+            const container = document.getElementById("live-clients-container");
+            const keys = Object.keys(liveClients);
+            
+            if (keys.length === 0) {
+                container.innerHTML = `<div class="col-span-full text-center py-12 text-zinc-600 font-bold">Немає підключених сесій на даний момент</div>`;
+                return;
+            }
+            
+            container.innerHTML = keys.map(k => {
+                const c = liveClients[k];
+                const cartSum = c.cart.reduce((s, i) => s + i.price, 0);
+                return `
+                    <div class="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl space-y-4">
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <span class="bg-white text-black font-black text-[10px] px-2.5 py-1 rounded-md uppercase tracking-wider">Стіл #${c.table || '?'}</span>
+                                <p class="text-zinc-500 text-[10px] font-bold mt-1.5 uppercase truncate max-w-[150px]">${c.user_agent}</p>
+                            </div>
+                            <span class="text-green-500 font-bold text-xs flex items-center gap-1.5">
+                                <span class="w-2 h-2 rounded-full bg-green-500 inline-block"></span> ${c.last_seen}
+                            </span>
+                        </div>
+                        
+                        <div class="bg-zinc-950 border border-zinc-800 p-3 rounded-xl space-y-1 text-xs">
+                            <p class="text-zinc-400 font-bold">IP: <span class="text-zinc-300 font-medium">${c.ip}</span></p>
+                            <p class="text-zinc-400 font-bold">Перегляд: <span class="text-zinc-300 font-medium">${c.current_view}</span></p>
+                        </div>
+
+                        <div>
+                            <p class="text-zinc-500 text-[10px] font-bold uppercase tracking-wider mb-1.5">Вміст кошика (${c.cart.length}):</p>
+                            ${c.cart.length > 0 ? `
+                                <div class="space-y-1 max-h-24 overflow-y-auto no-scrollbar pl-1 border-l border-zinc-800">
+                                    ${c.cart.map(i => `<p class="text-xs font-bold text-zinc-300 flex justify-between"><span>• ${i.name}</span> <span class="text-zinc-500">${i.price} ₴</span></p>`).join('')}
+                                </div>
+                                <div class="text-right text-sm font-black text-white mt-2 border-t border-zinc-800/60 pt-2">Разом: ${cartSum} ₴</div>
+                            ` : `<p class="text-xs text-zinc-600 font-bold italic">Кошик порожній</p>`}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // SOCKET LISTENERS
+        socket.on("live_client_update", (data) => {
+            liveClients[data.client_id] = data;
+            if (currentTab === "live") renderLiveClients();
+        });
+
+        socket.on("new_order", (order) => {
+            try { notificationSound.play(); } catch(e){}
+            activeOrders.unshift(order);
+            if (currentTab === "orders") renderOrders();
+        });
+
+        socket.on("waiter_called_admin", (data) => {
+            try { notificationSound.play(); } catch(e){}
+            alert(`ТЕРМІНОВО: Стіл #${data.table} надіслав запит виклику офіціанта о ${data.time}!`);
+        });
+
+        window.onload = init;
+    </script>
 </body>
 </html>
