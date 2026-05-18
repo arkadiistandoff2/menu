@@ -1,439 +1,305 @@
 <!DOCTYPE html>
-<html lang="uk">
+<html lang="uk" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Меню ресторану</title>
+    <title>Цифрове Меню</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
-    <script>
-        tailwind.config = { darkMode: 'class' };
-        if (localStorage.getItem('theme') === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
-            document.documentElement.classList.add('dark');
-        }
-    </script>
     <style>
-        body { font-family: 'Inter', sans-serif; padding-bottom: 120px; -webkit-tap-highlight-color: transparent; }
-        .slide-modal { transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
-        .modal-hidden { transform: translateY(100%); }
-        .modal-visible { transform: translateY(0); }
+        body { font-family: system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
-        * { transition: background-color 0.3s, border-color 0.3s, color 0.3s; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
 </head>
-<body class="bg-zinc-50 dark:bg-black text-zinc-900 dark:text-zinc-100 min-h-screen">
+<body class="bg-black text-white selection:bg-zinc-800 pb-32">
 
-    <header class="sticky top-0 z-40 bg-white/80 dark:bg-black/80 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800 px-5 py-4">
-        <div class="flex justify-between items-center max-w-2xl mx-auto">
+    <!-- Верхня панель -->
+    <header class="sticky top-0 z-40 bg-black/80 backdrop-blur-md border-b border-zinc-900 px-6 py-5">
+        <div class="max-w-2xl mx-auto flex justify-between items-center">
             <div>
-                <h1 class="text-2xl font-bold tracking-tight">Стіл #{{ table_id }}</h1>
-                <p class="text-xs text-zinc-500 font-semibold uppercase tracking-widest mt-1">Смачного відпочинку!</p>
+                <h1 id="table-title" class="text-2xl font-black tracking-tight">Стіл #1</h1>
+                <p class="text-zinc-500 text-xs font-bold uppercase tracking-widest mt-0.5">Смачного відпочинку!</p>
             </div>
-            <button onclick="toggleTheme()" class="p-2 bg-zinc-100 dark:bg-zinc-900 rounded-full w-10 h-10 flex items-center justify-center">
-                <div id="theme-indicator" class="w-4 h-4 rounded-full border-2 border-current"></div>
-            </button>
+            <div class="w-10 h-10 rounded-full border border-zinc-800 flex items-center justify-center text-zinc-400">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path></svg>
+            </div>
         </div>
     </header>
 
-    <main class="p-5 max-w-2xl mx-auto">
-        <div id="categories" class="flex gap-2 overflow-x-auto no-scrollbar pb-6 mb-2"></div>
-        <div id="menu" class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>
+    <!-- Головний контент -->
+    <main class="max-w-2xl mx-auto px-6 mt-6">
+        
+        <!-- Віджети статусів та Кнопки категорій разом з кнопкою виклику -->
+        <div id="active-order-status" class="mb-6 hidden bg-zinc-900 border border-zinc-800 p-4 rounded-2xl flex justify-between items-center">
+            <div>
+                <p class="text-zinc-500 text-xs font-bold uppercase">Активне замовлення</p>
+                <p id="order-id-label" class="text-sm font-bold text-zinc-300 mt-0.5">ID: -----</p>
+            </div>
+            <span id="order-status-badge" class="bg-white text-black text-xs font-black px-4 py-1.5 rounded-full uppercase tracking-wider">
+                Обробка
+            </span>
+        </div>
+
+        <div class="flex gap-2 overflow-x-auto no-scrollbar pb-4 items-center">
+            <button onclick="callWaiter()" class="bg-white text-black px-6 py-3 rounded-full whitespace-nowrap font-extrabold text-sm transition active:scale-95 shrink-0">
+                Виклик офіціанта
+            </button>
+            <div class="h-6 w-[1px] bg-zinc-800 shrink-0 mx-1"></div>
+            <div id="categories-container" class="flex gap-2">
+                <!-- Категорії генеруються динамічно -->
+            </div>
+        </div>
+
+        <!-- Сітка страв меню -->
+        <div id="menu-grid" class="grid grid-cols-1 gap-6 mt-4">
+            <!-- Страви генеруються динамічно -->
+        </div>
     </main>
 
-    <div class="fixed bottom-24 right-5 flex flex-col gap-3 z-40">
-        <button onclick="callWaiter()" class="w-14 h-14 bg-orange-500 text-white rounded-full shadow-2xl flex items-center justify-center text-2xl active:scale-90 transition relative group">
-            🛎️
-            <span class="absolute right-full mr-4 bg-black/80 text-white text-xs px-3 py-1 rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap transition">Виклик офіціанта</span>
-        </button>
-        <button onclick="toggleSupport(true)" class="w-14 h-14 bg-blue-500 text-white rounded-full shadow-2xl flex items-center justify-center text-2xl active:scale-90 transition relative group">
-            💬
-            <span class="absolute right-full mr-4 bg-black/80 text-white text-xs px-3 py-1 rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap transition">Підтримка</span>
-        </button>
-        <button onclick="toggleMyOrders(true)" class="w-14 h-14 bg-zinc-800 dark:bg-white dark:text-black text-white rounded-full shadow-2xl flex items-center justify-center text-2xl active:scale-90 transition relative group">
-            📋
-            <span class="absolute right-full mr-4 bg-black/80 text-white text-xs px-3 py-1 rounded-lg opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap transition">Мої замовлення</span>
+    <!-- Кнопка кошика внизу -->
+    <div class="fixed bottom-6 left-0 right-0 px-6 z-50 pointer-events-none">
+        <button id="cart-trigger-btn" onclick="openCartModal()" class="hidden pointer-events-auto w-full max-w-md mx-auto bg-white text-black py-5 px-8 rounded-2xl font-black shadow-2xl justify-between items-center transition active:scale-95">
+            <span class="text-base tracking-tight">Переглянути кошик</span>
+            <span id="cart-total-badge" class="bg-black text-white px-4 py-1.5 rounded-xl text-sm font-black">0 ₴</span>
         </button>
     </div>
 
-    <div class="fixed bottom-0 left-0 right-0 p-5 z-50 pointer-events-none">
-        <button id="cart-btn" onclick="toggleCart(true)" class="hidden pointer-events-auto w-full max-w-md mx-auto bg-zinc-900 dark:bg-white text-white dark:text-black py-5 rounded-2xl font-bold shadow-2xl flex justify-between px-8 active:scale-95 transition-all">
-            <span>Переглянути кошик</span>
-            <span id="cart-count-total" class="bg-white/20 dark:bg-black/10 px-3 rounded-lg">0</span>
-        </button>
-    </div>
-
+    <!-- Модальне вікно кошика -->
     <div id="cart-modal" class="fixed inset-0 z-[60] hidden">
-        <div onclick="toggleCart(false)" class="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
-        <div class="absolute bottom-0 left-0 right-0 bg-white dark:bg-zinc-950 rounded-t-[40px] max-h-[90vh] overflow-hidden flex flex-col slide-modal modal-hidden shadow-2xl">
-            <div class="w-12 h-1.5 bg-zinc-200 dark:bg-zinc-800 mx-auto mt-4 rounded-full"></div>
+        <div onclick="closeCartModal()" class="absolute inset-0 bg-black/80 backdrop-blur-sm"></div>
+        <div class="absolute bottom-0 left-0 right-0 bg-zinc-950 border-t border-zinc-800 rounded-t-[2.5rem] max-h-[85vh] overflow-hidden flex flex-col">
+            <div class="w-12 h-1 bg-zinc-800 mx-auto mt-4 rounded-full"></div>
             
-            <div class="p-8 pb-32 overflow-y-auto no-scrollbar">
-                <h2 class="text-3xl font-bold mb-6">Ваше замовлення</h2>
-                <div id="cart-items" class="space-y-4"></div>
-                
-                <div class="mt-8 pt-6 border-t border-zinc-100 dark:border-zinc-900">
-                    <textarea id="order-comment" placeholder="Ваш коментар (напр. без цибулі)..." class="w-full bg-zinc-50 dark:bg-zinc-900 p-4 rounded-2xl outline-none focus:ring-2 ring-zinc-200 dark:ring-zinc-800 transition min-h-[100px]"></textarea>
+            <div class="p-6 overflow-y-auto no-scrollbar flex-grow pb-32">
+                <h2 class="text-2xl font-black tracking-tight mb-6">Ваше замовлення</h2>
+                <div id="cart-items-list" class="space-y-3">
+                    <!-- Товари в кошику -->
                 </div>
             </div>
             
-            <div class="absolute bottom-0 left-0 right-0 p-8 bg-gradient-to-t from-white dark:from-zinc-950 via-white dark:via-zinc-950 pt-10">
-                <button id="send-order-btn" onclick="sendOrder()" class="w-full bg-zinc-900 dark:bg-white text-white dark:text-black py-5 rounded-2xl font-bold text-lg shadow-xl flex justify-between px-10 active:scale-95 transition">
-                    <span>Підтвердити</span>
-                    <span id="cart-sum">0 ₴</span>
+            <div class="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-zinc-950 via-zinc-950 to-transparent pt-10">
+                <button onclick="submitOrder()" class="w-full bg-white text-black py-5 px-8 rounded-2xl font-black text-lg flex justify-between items-center shadow-xl transition active:scale-95">
+                    <span>Підтвердити замовлення</span>
+                    <span id="cart-final-price" class="text-xl font-black">0 ₴</span>
                 </button>
             </div>
         </div>
     </div>
 
-    <div id="my-orders-modal" class="fixed inset-0 z-[60] hidden">
-        <div onclick="toggleMyOrders(false)" class="absolute inset-0 bg-black/60 backdrop-blur-sm"></div>
-        <div class="absolute bottom-0 left-0 right-0 bg-white dark:bg-zinc-950 rounded-t-[40px] p-8 h-[80vh] overflow-y-auto shadow-2xl slide-modal modal-hidden" id="my-orders-sheet">
-            <div class="flex justify-between items-center mb-6">
-                <h2 class="text-2xl font-bold">Мої замовлення</h2>
-                <button onclick="toggleMyOrders(false)" class="text-zinc-400 font-bold text-xl">✕</button>
-            </div>
-            <div id="my-orders-list" class="space-y-4"></div>
-        </div>
-    </div>
-
-    <div id="support-modal" class="fixed inset-0 z-[70] hidden flex flex-col bg-white dark:bg-black">
-        <header class="p-5 border-b border-zinc-100 dark:border-zinc-800 flex justify-between items-center">
-            <h2 class="font-bold text-lg">Служба підтримки</h2>
-            <button onclick="toggleSupport(false)" class="text-zinc-400 font-bold text-xl">✕</button>
-        </header>
-        <div id="chat-box" class="flex-1 overflow-y-auto p-5 space-y-4 bg-zinc-50 dark:bg-zinc-900/30"></div>
-        <div class="p-5 border-t border-zinc-100 dark:border-zinc-800 flex gap-2">
-            <input id="chat-input" type="text" placeholder="Напишіть нам..." class="flex-1 bg-zinc-100 dark:bg-zinc-800 p-4 rounded-2xl outline-none">
-            <button onclick="sendChatMessage()" class="bg-blue-600 text-white px-6 rounded-2xl font-bold">🚀</button>
-        </div>
-    </div>
-
-    <div id="review-modal" class="fixed inset-0 z-[80] hidden flex items-center justify-center p-5">
-        <div class="absolute inset-0 bg-black/60 backdrop-blur-md"></div>
-        <div class="bg-white dark:bg-zinc-900 rounded-[35px] p-8 w-full max-w-sm relative z-10 text-center shadow-2xl">
-            <h2 class="text-2xl font-bold mb-2">Оцініть обслуговування</h2>
-            <p class="text-zinc-500 mb-6">Нам важливо знати вашу думку</p>
-            
-            <div id="star-rating" class="flex justify-center gap-3 mb-8 text-4xl">
-                <span data-value="1" class="cursor-pointer text-zinc-300 dark:text-zinc-700 transition">★</span>
-                <span data-value="2" class="cursor-pointer text-zinc-300 dark:text-zinc-700 transition">★</span>
-                <span data-value="3" class="cursor-pointer text-zinc-300 dark:text-zinc-700 transition">★</span>
-                <span data-value="4" class="cursor-pointer text-zinc-300 dark:text-zinc-700 transition">★</span>
-                <span data-value="5" class="cursor-pointer text-zinc-300 dark:text-zinc-700 transition">★</span>
-            </div>
-            
-            <textarea id="review-text" placeholder="Що ми можемо покращити?" class="w-full bg-zinc-50 dark:bg-zinc-800 p-4 rounded-2xl mb-6 outline-none h-24 focus:ring-2 ring-zinc-200 dark:ring-zinc-700"></textarea>
-            <button onclick="sendReview()" class="w-full bg-zinc-900 dark:bg-white text-white dark:text-black py-4 rounded-2xl font-bold shadow-lg">Надіслати відгук</button>
-            <button onclick="closeReview()" class="mt-4 text-zinc-400 font-semibold text-sm">Пропустити</button>
-        </div>
-    </div>
-
-    <div id="admin-notif-modal" class="fixed inset-0 z-[100] hidden flex items-center justify-center p-5">
-        <div class="absolute inset-0 bg-black/60 backdrop-blur-md"></div>
-        <div class="bg-white dark:bg-zinc-900 rounded-[35px] p-8 w-full max-w-sm relative z-10 text-center shadow-2xl border border-zinc-200 dark:border-zinc-800">
-            <div class="w-12 h-12 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mx-auto mb-4">
-                <svg class="w-6 h-6 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
-            </div>
-            <h2 class="text-2xl font-bold mb-2">Повідомлення</h2>
-            <p id="admin-notif-text" class="text-zinc-600 dark:text-zinc-400 mb-8 font-medium"></p>
-            <button onclick="document.getElementById('admin-notif-modal').classList.add('hidden')" class="w-full bg-blue-600 hover:bg-blue-500 text-white py-4 rounded-2xl font-bold shadow-lg transition">Зрозуміло</button>
-        </div>
-    </div>
-
     <script>
         const socket = io();
-        const TABLE_ID = "{{ table_id }}" || "1";
-        const CLIENT_ID = localStorage.getItem('client_id') || 'cl_' + Math.random().toString(36).substr(2, 9);
-        localStorage.setItem('client_id', CLIENT_ID);
+        const tableId = window.location.pathname.replace('/', '') || "1";
+        const clientId = localStorage.getItem('client_id') || 'usr_' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('client_id', clientId);
 
-        let MENU = [];
-        let activeCategory = 'all';
-        let reviewRating = 0;
-        let currentReviewOrderId = null;
+        document.getElementById('table-title').innerText = `Стіл #${tableId}`;
 
-        let cart = [];
-        try {
-            const saved = JSON.parse(localStorage.getItem('cart')) || [];
-            cart = saved.reduce((acc, item) => {
-                const existing = acc.find(i => i.id === item.id);
-                if (existing) existing.quantity += item.quantity || 1;
-                else acc.push({...item, quantity: item.quantity || 1});
-                return acc;
-            }, []);
-        } catch(e) { cart = []; }
+        let currentCategory = "Все";
+        let fullMenu = [];
+        let categories = [];
+        let cart = JSON.parse(localStorage.getItem(`cart_table_${tableId}`)) || [];
+        let myCurrentOrderId = localStorage.getItem(`last_order_table_${tableId}`) || null;
+        let myCurrentOrderStatus = localStorage.getItem(`last_order_status_${tableId}`) || null;
 
-        async function loadData() {
+        async function init() {
+            await loadMenuData();
+            syncClientState();
+            renderStatusWidget();
+        }
+
+        async function loadMenuData() {
             try {
-                const [mRes, cRes] = await Promise.all([fetch('/api/menu'), fetch('/api/categories')]);
-                MENU = await mRes.json();
-                renderCategories(await cRes.json());
+                const [menuRes, catsRes] = await Promise.all([fetch('/api/menu'), fetch('/api/categories')]);
+                fullMenu = await menuRes.json();
+                categories = await catsRes.json();
+                
+                renderCategories();
                 renderMenu();
                 updateCartUI();
-            } catch (e) { console.error("Помилка завантаження:", e); }
+            } catch (err) {
+                console.error("Помилка ініціалізації даних:", err);
+            }
         }
 
-        function toggleTheme() {
-            document.documentElement.classList.toggle('dark');
-            localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+        function syncClientState() {
+            socket.emit("sync_client", {
+                client_id: clientId,
+                table: tableId,
+                cart: cart,
+                current_view: currentCategory
+            });
         }
 
-        function renderCategories(cats) {
-            const container = document.getElementById("categories");
-            let html = `<button onclick="filterCategory('all')" class="px-6 py-2.5 rounded-full whitespace-nowrap font-bold transition ${activeCategory === 'all' ? 'bg-zinc-900 dark:bg-white text-white dark:text-black shadow-md' : 'bg-zinc-100 dark:bg-zinc-900 text-zinc-500'}">Все</button>`;
-            html += cats.map(c => `
-                <button onclick="filterCategory('${c.name}')" class="px-6 py-2.5 rounded-full whitespace-nowrap font-bold transition ${activeCategory === c.name ? 'bg-zinc-900 dark:bg-white text-white dark:text-black shadow-md' : 'bg-zinc-100 dark:bg-zinc-900 text-zinc-500'}">${c.name}</button>
-            `).join("");
+        function renderCategories() {
+            const container = document.getElementById("categories-container");
+            let html = `<button onclick="setCategory('Все')" class="px-5 py-3 rounded-full text-sm font-bold tracking-tight transition shrink-0 ${currentCategory === 'Все' ? 'bg-zinc-800 text-white border border-zinc-700' : 'bg-zinc-900 text-zinc-400'}">Все</button>`;
+            
+            html += categories.map(c => {
+                const isAct = currentCategory === c.name;
+                return `<button onclick="setCategory('${c.name}')" class="px-5 py-3 rounded-full text-sm font-bold tracking-tight transition shrink-0 ${isAct ? 'bg-zinc-800 text-white border border-zinc-700' : 'bg-zinc-900 text-zinc-400'}">${c.name}</button>`;
+            }).join('');
+            
             container.innerHTML = html;
         }
 
-        function filterCategory(cat) {
-            activeCategory = cat;
-            renderCategories([]);
-            loadData();
+        function setCategory(cat) {
+            currentCategory = cat;
+            renderCategories();
+            renderMenu();
+            syncClientState();
         }
 
         function renderMenu() {
-            const m = document.getElementById("menu");
-            const filtered = activeCategory === 'all' ? MENU : MENU.filter(i => i.category === activeCategory);
+            const grid = document.getElementById("menu-grid");
+            const filtered = currentCategory === 'Все' ? fullMenu : fullMenu.filter(m => m.category === currentCategory);
             
             if (filtered.length === 0) {
-                m.innerHTML = '<div class="col-span-full py-20 text-center text-zinc-400 font-medium">У цій категорії поки порожньо</div>';
+                grid.innerHTML = `<div class="text-center py-12 text-zinc-600 font-bold">У цій категорії ще немає страв</div>`;
                 return;
             }
-
-            m.innerHTML = filtered.map(item => {
-                const imgSrc = item.image && item.image.startsWith('data:') ? item.image : (item.image ? `/static/images/${item.image}` : '');
-                return `
-                <div class="bg-white dark:bg-zinc-900 rounded-[32px] shadow-sm border border-zinc-100 dark:border-zinc-800 overflow-hidden flex flex-col">
-                    <div class="h-52 bg-zinc-100 dark:bg-zinc-800 relative">
-                        ${imgSrc ? `<img src="${imgSrc}" class="w-full h-full object-cover" loading="lazy">` : '<div class="w-full h-full flex items-center justify-center text-zinc-300 text-xs font-semibold uppercase tracking-wider">Немає фото</div>'}
-                        <div class="absolute bottom-3 right-3 bg-white/95 dark:bg-zinc-900/95 backdrop-blur px-4 py-1.5 rounded-2xl font-extrabold shadow-sm text-sm">${item.price} ₴</div>
+            
+            grid.innerHTML = filtered.map(item => `
+                <div class="bg-zinc-900/40 border border-zinc-900 rounded-[2rem] p-4 flex flex-col relative overflow-hidden">
+                    <div class="relative w-full h-56 bg-zinc-900 rounded-2xl overflow-hidden flex items-center justify-center">
+                        ${item.image ? `<img src="${item.image}" class="w-full h-full object-cover">` : `<span class="text-zinc-600 text-xs font-black uppercase tracking-widest">Немає фото</span>`}
+                        <div class="absolute bottom-3 right-3 bg-black/60 backdrop-blur-md text-white px-3 py-1.5 rounded-xl text-sm font-black border border-zinc-800">
+                            ${item.price} ₴
+                        </div>
                     </div>
-                    <div class="px-5 py-5 flex-1 flex flex-col">
-                        <h2 class="text-lg font-bold mb-1 leading-tight">${item.name}</h2>
-                        <p class="text-xs text-zinc-400 mb-4 line-clamp-2 font-medium">${item.description || ''}</p>
-                        <button onclick="addToCartById(${item.id})" class="bg-zinc-900 dark:bg-white text-white dark:text-black font-bold py-3.5 rounded-2xl active:scale-95 transition-all text-sm">Додати</button>
+                    <div class="pt-4 px-1 flex flex-col flex-grow">
+                        <h3 class="text-lg font-bold tracking-tight text-white mb-1">${item.name}</h3>
+                        <p class="text-zinc-500 text-xs leading-relaxed mb-4 flex-grow line-clamp-2">${item.description || 'Опис відсутній.'}</p>
+                        <button onclick="addToCart('${item.id}')" class="w-full bg-white text-black hover:bg-zinc-200 py-3.5 rounded-xl font-black text-sm transition active:scale-95">
+                            Додати
+                        </button>
                     </div>
-                </div>`
-            }).join("");
+                </div>
+            `).join('');
         }
 
-        function addToCartById(id) {
-            const item = MENU.find(i => i.id === id);
-            if(!item) return;
-            const existing = cart.find(i => i.id === id);
-            if(existing) existing.quantity += 1;
-            else cart.push({...item, quantity: 1});
+        function addToCart(id) {
+            const match = fullMenu.find(m => m.id === id);
+            if (!match) return;
+            cart.push({ ...match, item_uid: Date.now() });
+            localStorage.setItem(`cart_table_${tableId}`, JSON.stringify(cart));
             updateCartUI();
-            showToast("Додано у кошик");
+            syncClientState();
         }
 
-        function changeQuantity(id, delta) {
-            const existing = cart.find(i => i.id === id);
-            if(existing) {
-                existing.quantity += delta;
-                if(existing.quantity <= 0) cart = cart.filter(i => i.id !== id);
-                updateCartUI();
-            }
+        function removeFromCart(itemUid) {
+            cart = cart.filter(i => i.item_uid !== itemUid);
+            localStorage.setItem(`cart_table_${tableId}`, JSON.stringify(cart));
+            updateCartUI();
+            if (cart.length === 0) closeCartModal();
+            syncClientState();
         }
 
         function updateCartUI() {
-            localStorage.setItem('cart', JSON.stringify(cart));
-            const count = cart.reduce((a, b) => a + b.quantity, 0);
-            const sum = cart.reduce((a, b) => a + (parseInt(b.price) * b.quantity), 0);
+            const triggerBtn = document.getElementById("cart-trigger-btn");
+            const totalBadge = document.getElementById("cart-total-badge");
+            const finalPrice = document.getElementById("cart-final-price");
             
-            document.getElementById("cart-count-total").innerText = count;
-            document.getElementById("cart-sum").innerText = sum + " ₴";
-            document.getElementById("cart-btn").classList.toggle("hidden", count === 0);
+            const totalSum = cart.reduce((acc, curr) => acc + curr.price, 0);
             
-            const itemsCont = document.getElementById("cart-items");
-            itemsCont.innerHTML = cart.map(i => `
-                <div class="flex justify-between items-center bg-zinc-50 dark:bg-zinc-900 p-4 rounded-2xl border border-zinc-100 dark:border-zinc-800">
-                    <div class="flex flex-col flex-1 pr-4">
-                        <span class="font-bold line-clamp-1">${i.name}</span>
-                        <span class="text-sm text-zinc-500 font-medium">${parseInt(i.price) * i.quantity} ₴</span>
+            if (cart.length > 0) {
+                triggerBtn.classList.remove('hidden');
+                triggerBtn.classList.add('flex');
+            } else {
+                triggerBtn.classList.add('hidden');
+                triggerBtn.classList.remove('flex');
+            }
+            
+            totalBadge.innerText = `${totalSum} ₴`;
+            finalPrice.innerText = `${totalSum} ₴`;
+            
+            document.getElementById("cart-items-list").innerHTML = cart.map(i => `
+                <div class="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
+                    <div>
+                        <p class="font-bold text-sm text-white">${i.name}</p>
+                        <p class="text-zinc-500 text-xs font-bold mt-0.5">${i.price} ₴</p>
                     </div>
-                    <div class="flex items-center gap-3">
-                        <button onclick="changeQuantity(${i.id}, -1)" class="w-8 h-8 flex items-center justify-center bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-full font-bold active:scale-95 transition">-</button>
-                        <span class="font-bold text-lg w-4 text-center">${i.quantity}</span>
-                        <button onclick="changeQuantity(${i.id}, 1)" class="w-8 h-8 flex items-center justify-center bg-zinc-200 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300 rounded-full font-bold active:scale-95 transition">+</button>
-                    </div>
+                    <button onclick="removeFromCart(${i.item_uid})" class="text-zinc-500 hover:text-white font-bold p-2 text-sm tracking-wide">
+                        Видалити
+                    </button>
                 </div>
-            `).join("");
-
-            if (count === 0 && !document.getElementById("cart-modal").classList.contains("hidden")) {
-                toggleCart(false);
-            }
-            syncWithServer();
+            `).join('');
         }
 
-        function toggleCart(show) {
-            const m = document.getElementById("cart-modal");
-            const content = m.querySelector('.slide-modal');
-            if (show) {
-                m.classList.remove("hidden");
-                setTimeout(() => content.classList.replace("modal-hidden", "modal-visible"), 10);
-            } else {
-                content.classList.replace("modal-visible", "modal-hidden");
-                setTimeout(() => m.classList.add("hidden"), 300);
-            }
-        }
-
-        // --- OPTIMISTIC UI SEND ORDER ---
-        function sendOrder() {
-            if (cart.length === 0) return;
-            const expandedItems = [];
-            cart.forEach(item => { for(let i=0; i<item.quantity; i++) expandedItems.push({name: item.name, price: item.price}); });
-
-            const orderData = {
-                table: TABLE_ID,
-                items: expandedItems,
-                total: cart.reduce((a, b) => a + (parseInt(b.price) * b.quantity), 0),
-                comment: document.getElementById("order-comment").value,
-                client_id: CLIENT_ID
-            };
-
-            currentReviewOrderId = Date.now(); 
-            
-            cart = [];
-            updateCartUI();
-            toggleCart(false);
-            document.getElementById("order-comment").value = "";
-            showToast("🚀 Замовлення відправлено!");
-
-            if (socket.connected) {
-                socket.emit("create_order", orderData);
-            } else {
-                fetch('/api/order_fallback', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(orderData) });
-            }
-        }
+        function openCartModal() { document.getElementById("cart-modal").classList.remove('hidden'); }
+        function closeCartModal() { document.getElementById("cart-modal").classList.add('hidden'); }
 
         function callWaiter() {
-            socket.emit("call_waiter", { table: TABLE_ID });
-            showToast("🛎️ Офіціант вже йде до вас!");
+            socket.emit("call_waiter", { table: tableId });
+            alert("Запит надіслано. Офіціант підійде найближчим часом.");
         }
 
-        async function toggleMyOrders(show) {
-            const m = document.getElementById("my-orders-modal");
-            const s = document.getElementById("my-orders-sheet");
-            if(show) {
-                m.classList.remove("hidden");
-                setTimeout(() => s.classList.replace("modal-hidden", "modal-visible"), 10);
+        async function submitOrder() {
+            if (cart.length === 0) return;
+            const totalSum = cart.reduce((acc, curr) => acc + curr.price, 0);
+            
+            const res = await fetch('/api/order', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    table: tableId,
+                    items: cart,
+                    total: totalSum
+                })
+            });
+            
+            if (res.ok) {
+                const data = await res.json();
+                myCurrentOrderId = data.order.id;
+                myCurrentOrderStatus = data.order.status;
                 
-                const res = await fetch(`/api/my_orders/${CLIENT_ID}`);
-                const orders = await res.json();
-                document.getElementById("my-orders-list").innerHTML = orders.map(o => `
-                    <div class="p-5 bg-zinc-50 dark:bg-zinc-900 rounded-3xl border border-zinc-100 dark:border-zinc-800">
-                        <div class="flex justify-between items-center mb-2">
-                            <span class="font-bold text-lg">#${o.id.toString().slice(-4)}</span>
-                            <span class="text-blue-500 font-bold">${o.status}</span>
-                        </div>
-                        <div class="text-sm text-zinc-500 mb-3">${o.items.map(i => i.name).join(', ')}</div>
-                        <div class="font-black text-xl">${o.total} ₴</div>
-                    </div>
-                `).join('') || '<div class="text-center text-zinc-500 py-10 font-bold">У вас ще немає замовлень</div>';
+                localStorage.setItem(`last_order_table_${tableId}`, myCurrentOrderId);
+                localStorage.setItem(`last_order_status_${tableId}`, myCurrentOrderStatus);
+                
+                cart = [];
+                localStorage.setItem(`cart_table_${tableId}`, JSON.stringify(cart));
+                
+                updateCartUI();
+                closeCartModal();
+                renderStatusWidget();
+                syncClientState();
+                alert(`Замовлення #${myCurrentOrderId} успішно надіслано та обробляється!`);
+            }
+        }
+
+        function renderStatusWidget() {
+            const widget = document.getElementById("active-order-status");
+            const label = document.getElementById("order-id-label");
+            const badge = document.getElementById("order-status-badge");
+            
+            if (myCurrentOrderId && myCurrentOrderStatus && myCurrentOrderStatus !== "Завершено") {
+                widget.classList.remove("hidden");
+                label.innerText = `ID: ${myCurrentOrderId}`;
+                badge.innerText = myCurrentOrderStatus;
+                
+                if (myCurrentOrderStatus === "Нове") {
+                    badge.className = "bg-blue-600 text-white text-xs font-black px-4 py-1.5 rounded-full uppercase tracking-wider";
+                } else if (myCurrentOrderStatus === "Готується") {
+                    badge.className = "bg-amber-500 text-black text-xs font-black px-4 py-1.5 rounded-full uppercase tracking-wider";
+                } else if (myCurrentOrderStatus === "Готово") {
+                    badge.className = "bg-green-600 text-white text-xs font-black px-4 py-1.5 rounded-full uppercase tracking-wider";
+                }
             } else {
-                s.classList.replace("modal-visible", "modal-hidden");
-                setTimeout(() => m.classList.add("hidden"), 300);
+                widget.classList.add("hidden");
             }
         }
 
-        function toggleSupport(show) {
-            document.getElementById("support-modal").classList.toggle("hidden", !show);
-            if(show) loadChatHistory();
-        }
-
-        async function loadChatHistory() {
-            const res = await fetch(`/api/chat_history/${CLIENT_ID}`);
-            const history = await res.json();
-            document.getElementById("chat-box").innerHTML = "";
-            history.forEach(renderChatMessage);
-            const box = document.getElementById("chat-box");
-            box.scrollTop = box.scrollHeight;
-        }
-
-        function sendChatMessage() {
-            const input = document.getElementById("chat-input");
-            if(!input.value.trim()) return;
-            socket.emit("send_chat_msg", { client_id: CLIENT_ID, msg: input.value, sender: "client", table: TABLE_ID });
-            input.value = "";
-        }
-
-        socket.on("new_chat_msg", (data) => {
-            if(data.client_id === CLIENT_ID) {
-                renderChatMessage(data);
-                const box = document.getElementById("chat-box");
-                box.scrollTop = box.scrollHeight;
+        socket.on("order_status_updated", (data) => {
+            if (data.id === myCurrentOrderId) {
+                myCurrentOrderStatus = data.status;
+                localStorage.setItem(`last_order_status_${tableId}`, myCurrentOrderStatus);
+                renderStatusWidget();
             }
         });
 
-        function renderChatMessage(data) {
-            const isMe = data.sender === "client";
-            document.getElementById("chat-box").innerHTML += `
-                <div class="flex ${isMe ? 'justify-end' : 'justify-start'}">
-                    <div class="p-4 rounded-2xl max-w-[80%] text-sm ${isMe ? 'bg-blue-600 text-white rounded-br-none' : 'bg-zinc-200 dark:bg-zinc-800 rounded-bl-none'}">
-                        ${data.msg}
-                        <div class="text-[10px] opacity-50 mt-1 text-right">${data.time}</div>
-                    </div>
-                </div>
-            `;
-        }
+        socket.on("menu_updated", loadMenuData);
 
-        function syncWithServer() {
-            socket.emit("sync_client", { client_id: CLIENT_ID, table_id: TABLE_ID, cart: cart, user_agent: navigator.userAgent });
-        }
-
-        function showToast(text) {
-            const t = document.createElement("div");
-            t.className = "fixed top-8 left-1/2 -translate-x-1/2 bg-zinc-900/90 dark:bg-white/90 backdrop-blur text-white dark:text-black px-6 py-3 rounded-2xl shadow-xl font-bold z-[100] transition-all duration-300 opacity-0 scale-90 tracking-wide whitespace-nowrap";
-            t.innerText = text;
-            document.body.appendChild(t);
-            setTimeout(() => { t.classList.remove('opacity-0', 'scale-90'); }, 50);
-            setTimeout(() => { t.classList.add('opacity-0', 'scale-90'); setTimeout(() => t.remove(), 300); }, 3000);
-        }
-
-        const stars = document.querySelectorAll("#star-rating span");
-        stars.forEach(star => {
-            star.addEventListener("click", (e) => {
-                reviewRating = parseInt(e.target.dataset.value);
-                stars.forEach((s, i) => {
-                    s.classList.toggle("text-yellow-500", i < reviewRating);
-                    s.classList.toggle("text-zinc-300", i >= reviewRating);
-                    s.classList.toggle("dark:text-zinc-700", i >= reviewRating);
-                });
-            });
-        });
-
-        function closeReview() { document.getElementById("review-modal").classList.add("hidden"); }
-
-        async function sendReview() {
-            if (reviewRating === 0) return;
-            await fetch("/api/review", {
-                method: "POST",
-                headers: {"Content-Type": "application/json"},
-                body: JSON.stringify({ order_id: currentReviewOrderId, rating: reviewRating, text: document.getElementById("review-text").value })
-            });
-            closeReview();
-            showToast("Дякуємо!");
-        }
-
-        socket.on("notify_client", (data) => {
-            if (data.status === "Завершене" || data.status === "Завершено") {
-                document.getElementById("review-modal").classList.remove("hidden");
-                showToast("🌟 Не забудьте залишити відгук!");
-            } else {
-                showToast(`Статус замовлення змінено на: ${data.status}`);
-            }
-        });
-
-        socket.on("admin_message", (data) => {
-            document.getElementById("admin-notif-text").innerText = data.msg;
-            document.getElementById("admin-notif-modal").classList.remove("hidden");
-        });
-
-        socket.on("menu_updated", loadData);
-        window.onload = loadData;
+        window.onload = init;
     </script>
 </body>
 </html>
