@@ -1,5 +1,5 @@
-import gevent.monkey
-gevent.monkey.patch_all()
+import eventlet
+eventlet.monkey.patch_all()
 import os
 import uuid
 from datetime import datetime
