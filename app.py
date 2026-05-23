@@ -1,5 +1,5 @@
 import eventlet
-eventlet.monkey.patch_all()
+eventlet.monkey_patch()
 import os
 import uuid
 from datetime import datetime
