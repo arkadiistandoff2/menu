@@ -1,649 +1,819 @@
-import eventlet
-eventlet.monkey_patch()
 import os
-import uuid
+import time
 from datetime import datetime
-from flask import Flask, render_template_string, request, session, redirect, url_for
-from flask_socketio import SocketIO, emit
-from pymongo import MongoClient
 from bson.objectid import ObjectId
+from flask import Flask, request, render_template_string, session, redirect, url_for, jsonify
+from flask_socketio import SocketIO, emit, join_room
 
-# ==========================================
-# КОНФІГУРАЦІЯ ТА НАЛАШТУВАННЯ
-# ==========================================
-
+# === КОНФІГУРАЦІЯ ТА БАЗА ДАНИХ ===
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'cafe_secret_key_2024'
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'super-secret-cafe-key')
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# ПІДКЛЮЧЕННЯ ДО БАЗИ ДАНИХ (Встав свій URI)
-MONGO_URI = "mongodb://SofterX:Zlata@ac-jstiscf-shard-00-00.lmu80a8.mongodb.net:27017,ac-jstiscf-shard-00-01.lmu80a8.mongodb.net:27017,ac-jstiscf-shard-00-02.lmu80a8.mongodb.net:27017/?ssl=true&replicaSet=atlas-xocnt5-shard-0&authSource=admin&appName=Cluster0" 
-ADMIN_PASSWORD = "admin123"
+MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/cafe_db')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'admin123')
 
-try:
-    client = MongoClient(MONGO_URI)
-    db = client['cafe_automation']
-    menu_col = db['menu']
-    orders_col = db['orders']
-    sessions_col = db['active_sessions']
-    print("✅ База даних підключена!")
-except Exception as e:
-    print(f"❌ Помилка підключення до БД: {e}")
+from pymongo import MongoClient
+client = MongoClient(MONGO_URI)
+db = client.cafe_db
 
-# ==========================================
-# ГОЛОВНИЙ ШАБЛОН (HTML/CSS/JS в одному блоці)
-# ==========================================
+# Словник для зберігання живих сесій користувачів
+live_users = {}
 
-BASE_HTML = """
+# === HTML ШАБЛОНИ (ВБУДОВАНІ) ===
+
+# 1. Шаблон логіну адміна
+LOGIN_HTML = """
 <!DOCTYPE html>
 <html lang="uk">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Cafe System</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Вхід | Адмін</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+</head>
+<body class="bg-gray-100 flex items-center justify-center h-screen">
+    <div class="bg-white p-8 rounded-lg shadow-md w-96">
+        <h2 class="text-2xl font-bold mb-6 text-center text-gray-800">Вхід в Панель</h2>
+        <form method="POST" action="/login">
+            <input type="password" name="password" placeholder="Пароль адміністратора" required class="w-full p-3 border rounded mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <button type="submit" class="w-full bg-blue-600 text-white p-3 rounded font-bold hover:bg-blue-700">Увійти</button>
+        </form>
+    </div>
+</body>
+</html>
+"""
+
+# 2. Шаблон Клієнта (Мобільний Dark Mode)
+CLIENT_HTML = """
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Меню Закладу</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #0f0f0f; color: #e0e0e0; }
-        .dark-card { background: #1a1a1a; border: 1px solid #333; border-radius: 16px; }
-        .accent-gradient { background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%); }
-        .btn-active { transform: scale(0.95); transition: 0.1s; }
-        .scroll-hide::-webkit-scrollbar { display: none; }
-        .modal-bottom { transform: translateY(100%); transition: transform 0.3s ease-out; }
-        .modal-bottom.active { transform: translateY(0); }
-        .status-badge { transition: all 0.5s ease; }
-        .blink { animation: blinker 1.5s linear infinite; }
-        @keyframes blinker { 50% { opacity: 0.3; } }
+        body { background-color: #121212; color: #ffffff; -webkit-tap-highlight-color: transparent; }
+        .hide-scroll::-webkit-scrollbar { display: none; }
+        .modal-overlay { background: rgba(0,0,0,0.8); backdrop-filter: blur(4px); }
+        .smooth-transition { transition: all 0.3s ease; }
     </style>
 </head>
-<body class="scroll-hide">
+<body class="font-sans pb-24">
+    <!-- Шапка -->
+    <header class="fixed top-0 left-0 right-0 bg-gray-900 shadow-md z-40 p-4 flex justify-between items-center">
+        <div class="text-xl font-bold">Стіл #<span id="table-number">{{ table }}</span></div>
+        <button onclick="callWaiter()" class="bg-red-600 text-white px-4 py-2 rounded-full font-bold text-sm shadow-lg active:scale-95 smooth-transition">Виклик офіціанта</button>
+    </header>
 
-    {% if mode == 'client' %}
-    <!-- ==========================================
-         ІНТЕРФЕЙС КЛІЄНТА
-    =========================================== -->
-    <div id="app" class="max-w-md mx-auto min-h-screen pb-32">
-        <!-- Шапка -->
-        <header class="sticky top-0 z-50 bg-[#0f0f0f]/80 backdrop-blur-md p-4 flex justify-between items-center border-b border-white/10">
-            <h1 class="text-2xl font-extrabold tracking-tighter text-white">Стіл #{{ table_id }}</h1>
-            <button onclick="callWaiter()" class="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest active:scale-95 transition">
-                Виклик офіціанта
-            </button>
-        </header>
+    <!-- Віджет статусу замовлення -->
+    <div id="status-widget" class="hidden fixed top-16 left-4 right-4 z-30 p-3 rounded-lg shadow-lg font-bold text-center text-white smooth-transition"></div>
 
-        <!-- Статус замовлення -->
-        <div id="status-container" class="px-4 mt-4 hidden">
-            <div id="status-widget" class="p-4 rounded-2xl text-center font-bold text-sm uppercase tracking-wider shadow-lg shadow-indigo-500/20">
-                Завантаження статусу...
-            </div>
+    <main class="pt-20 px-4">
+        <!-- Фільтр категорій -->
+        <div class="flex space-x-3 overflow-x-auto hide-scroll py-2 mb-4" id="category-filter">
+            <!-- Генерується через JS -->
         </div>
 
-        <!-- Категорії -->
-        <div class="flex overflow-x-auto p-4 gap-2 scroll-hide">
-            <button onclick="filterMenu('all')" class="cat-btn px-6 py-2 rounded-full bg-white text-black font-semibold text-sm whitespace-nowrap">Все</button>
-            {% for cat in categories %}
-            <button onclick="filterMenu('{{ cat }}')" class="cat-btn px-6 py-2 rounded-full bg-[#1a1a1a] text-gray-400 font-semibold text-sm border border-white/10 whitespace-nowrap">{{ cat }}</button>
-            {% endfor %}
+        <!-- Вітрина -->
+        <div class="grid grid-cols-2 gap-4" id="menu-grid">
+            <!-- Генерується через JS -->
         </div>
+    </main>
 
-        <!-- Вітрина меню -->
-        <div id="menu-grid" class="px-4 grid grid-cols-1 gap-4">
-            {% for item in menu %}
-            <div class="menu-item dark-card p-4 flex flex-col gap-3" data-category="{{ item.category }}">
-                <div class="flex justify-between items-start">
-                    <h3 class="text-lg font-bold text-white">{{ item.name }}</h3>
-                    <span class="text-indigo-400 font-extrabold">{{ item.price }} ₴</span>
+    <!-- Плаваючий кошик -->
+    <div id="cart-float" class="hidden fixed bottom-4 left-4 right-4 z-40 bg-white text-black p-4 rounded-2xl shadow-2xl flex justify-between items-center active:scale-95 smooth-transition" onclick="openCart()">
+        <div class="font-bold">Переглянути кошик</div>
+        <div class="font-bold text-xl"><span id="cart-float-total">0</span> ₴</div>
+    </div>
+
+    <!-- Модалка кошика -->
+    <div id="cart-modal" class="fixed inset-0 z-50 hidden flex-col justify-end modal-overlay">
+        <div class="bg-gray-900 rounded-t-3xl p-6 h-3/4 flex flex-col relative transform translate-y-full smooth-transition" id="cart-modal-content">
+            <button onclick="closeCart()" class="absolute top-4 right-4 bg-gray-800 p-2 rounded-full w-10 h-10 flex items-center justify-center font-bold text-xl">&times;</button>
+            <h2 class="text-2xl font-bold mb-4">Ваше замовлення</h2>
+            <div id="cart-items" class="flex-1 overflow-y-auto hide-scroll space-y-4"></div>
+            <div class="mt-4 pt-4 border-t border-gray-700">
+                <div class="flex justify-between text-xl font-bold mb-4">
+                    <span>Разом:</span>
+                    <span><span id="cart-modal-total">0</span> ₴</span>
                 </div>
-                <p class="text-gray-500 text-xs leading-relaxed">{{ item.description }}</p>
-                <button onclick="addToCart('{{ item._id }}', '{{ item.name }}', {{ item.price }})" 
-                        class="w-full py-3 mt-2 rounded-xl bg-white/5 border border-white/10 text-white font-bold hover:bg-white/10 active:bg-white active:text-black transition uppercase text-[10px] tracking-widest">
-                    Додати в чек
-                </button>
+                <button onclick="placeOrder()" id="confirm-btn" class="w-full bg-blue-600 text-white p-4 rounded-xl font-bold text-lg shadow-lg active:scale-95 smooth-transition">Підтвердити замовлення</button>
             </div>
-            {% endfor %}
         </div>
+    </div>
 
-        <!-- Плаваючий кошик -->
-        <div id="cart-bar" class="fixed bottom-6 left-4 right-4 z-[60] hidden">
-            <button onclick="toggleCart(true)" class="w-full accent-gradient p-4 rounded-2xl flex justify-between items-center shadow-2xl shadow-indigo-500/40">
-                <span class="font-extrabold uppercase text-xs tracking-widest">Переглянути замовлення</span>
-                <span id="cart-total-bar" class="bg-black/20 px-3 py-1 rounded-lg font-bold">0 ₴</span>
-            </button>
-        </div>
-
-        <!-- Модалка кошика -->
-        <div id="cart-modal-overlay" onclick="toggleCart(false)" class="fixed inset-0 bg-black/80 z-[70] hidden backdrop-blur-sm"></div>
-        <div id="cart-modal" class="fixed bottom-0 left-0 right-0 z-[80] bg-[#1a1a1a] rounded-t-[32px] p-6 modal-bottom border-t border-white/10">
-            <div class="w-12 h-1.5 bg-white/20 mx-auto rounded-full mb-6"></div>
-            <h2 class="text-2xl font-bold mb-6">Ваш вибір</h2>
-            <div id="cart-items" class="space-y-4 max-h-[50vh] overflow-y-auto pr-2">
-                <!-- Товари кошика -->
-            </div>
-            <div class="mt-8 pt-6 border-t border-white/10">
-                <div class="flex justify-between items-center mb-6">
-                    <span class="text-gray-400 font-semibold">Разом до сплати:</span>
-                    <span id="cart-total-modal" class="text-3xl font-black text-white">0 ₴</span>
-                </div>
-                <button onclick="confirmOrder()" id="confirm-btn" class="w-full py-5 rounded-2xl accent-gradient text-white font-black uppercase tracking-widest text-sm shadow-xl shadow-indigo-500/30">
-                    Надіслати замовлення
-                </button>
-            </div>
+    <!-- Універсальна модалка для повідомлень -->
+    <div id="msg-modal" class="fixed inset-0 z-[60] hidden items-center justify-center modal-overlay opacity-0 smooth-transition">
+        <div class="bg-gray-800 p-6 rounded-2xl w-5/6 max-w-sm text-center shadow-2xl">
+            <h3 id="msg-title" class="text-xl font-bold mb-2"></h3>
+            <p id="msg-text" class="text-gray-300 mb-6"></p>
+            <button onclick="closeMsg()" class="w-full bg-blue-600 p-3 rounded-xl font-bold">Зрозуміло</button>
         </div>
     </div>
 
     <script>
         const socket = io();
-        const tableId = "{{ table_id }}";
+        const tableId = "{{ table }}";
+        let menuData = [];
         let cart = JSON.parse(localStorage.getItem('cafe_cart_' + tableId)) || {};
-        let activeOrderId = localStorage.getItem('active_order_' + tableId);
+        let activeCategory = "Всі";
+        let currentOrderId = localStorage.getItem('cafe_order_' + tableId) || null;
 
-        // Живий моніторинг кошика для адміна
-        function syncCartWithAdmin() {
-            socket.emit('update_live_cart', {
-                table_id: tableId,
-                cart: cart,
-                device: navigator.userAgent
-            });
+        // Ініціалізація
+        socket.on('connect', () => {
+            socket.emit('client_join', { table: tableId, user_agent: navigator.userAgent });
+            socket.emit('get_menu');
+            if (currentOrderId) socket.emit('check_order_status', { order_id: currentOrderId });
+            sendLiveCart();
+        });
+
+        socket.on('menu_data', (data) => {
+            menuData = data;
+            renderCategories();
+            renderMenu();
+            updateCartUI();
+        });
+
+        socket.on('order_status_update', (data) => {
+            if (data.order_id === currentOrderId) {
+                const widget = document.getElementById('status-widget');
+                widget.classList.remove('hidden', 'bg-blue-500', 'bg-yellow-500', 'bg-green-500');
+                if (data.status === 'Нове') {
+                    widget.classList.add('bg-blue-500');
+                    widget.innerText = 'Замовлення відправлено на кухню';
+                } else if (data.status === 'Готується') {
+                    widget.classList.add('bg-yellow-500');
+                    widget.innerText = 'Ваші страви вже готуються!';
+                } else if (data.status === 'Готово') {
+                    widget.classList.add('bg-green-500');
+                    widget.innerText = 'Готово! Офіціант несе замовлення.';
+                } else if (data.status === 'Закрито') {
+                    widget.classList.add('hidden');
+                    currentOrderId = null;
+                    localStorage.removeItem('cafe_order_' + tableId);
+                    showMsg("Дякуємо!", "Ваше замовлення закрито. Чекаємо вас знову!");
+                }
+            }
+        });
+
+        // UI Функції
+        function renderCategories() {
+            const container = document.getElementById('category-filter');
+            const categories = ["Всі", ...new Set(menuData.map(i => i.category))];
+            container.innerHTML = categories.map(cat => `
+                <button onclick="setCategory('${cat}')" class="px-5 py-2 rounded-full whitespace-nowrap font-bold text-sm smooth-transition ${activeCategory === cat ? 'bg-white text-black' : 'bg-gray-800 text-gray-300'}">${cat}</button>
+            `).join('');
         }
 
-        function addToCart(id, name, price) {
-            if (cart[id]) cart[id].qty++;
-            else cart[id] = { name, price, qty: 1 };
-            renderCart();
-            syncCartWithAdmin();
+        function setCategory(cat) {
+            activeCategory = cat;
+            renderCategories();
+            renderMenu();
+            socket.emit('live_update', { table: tableId, action: 'view_category', category: cat });
         }
 
-        function updateQty(id, delta) {
-            cart[id].qty += delta;
-            if (cart[id].qty <= 0) delete cart[id];
-            renderCart();
-            syncCartWithAdmin();
+        function renderMenu() {
+            const container = document.getElementById('menu-grid');
+            const items = activeCategory === "Всі" ? menuData : menuData.filter(i => i.category === activeCategory);
+            container.innerHTML = items.map(item => `
+                <div class="bg-gray-800 rounded-2xl p-4 flex flex-col justify-between">
+                    <div>
+                        <h3 class="font-bold text-lg mb-1">${item.name}</h3>
+                        <p class="text-xs text-gray-400 mb-2">${item.description}</p>
+                    </div>
+                    <div>
+                        <div class="text-xl font-bold mb-3">${item.price} ₴</div>
+                        <button onclick="addToCart('${item._id}')" class="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded-xl font-bold active:scale-95 smooth-transition">Додати</button>
+                    </div>
+                </div>
+            `).join('');
         }
 
-        function renderCart() {
-            const container = document.getElementById('cart-items');
-            const cartBar = document.getElementById('cart-bar');
+        // Кошик
+        function addToCart(id) {
+            cart[id] = (cart[id] || 0) + 1;
+            saveCart();
+            updateCartUI();
+        }
+
+        function changeQty(id, delta) {
+            cart[id] += delta;
+            if (cart[id] <= 0) delete cart[id];
+            saveCart();
+            updateCartUI();
+            if (Object.keys(cart).length === 0) closeCart();
+        }
+
+        function saveCart() {
+            localStorage.setItem('cafe_cart_' + tableId, JSON.stringify(cart));
+            sendLiveCart();
+        }
+
+        function sendLiveCart() {
+            const cartDetails = Object.keys(cart).map(id => {
+                const item = menuData.find(i => i._id === id);
+                return item ? { name: item.name, qty: cart[id], price: item.price } : null;
+            }).filter(i => i);
+            socket.emit('live_update', { table: tableId, action: 'cart', cart: cartDetails });
+        }
+
+        function updateCartUI() {
+            const floatBtn = document.getElementById('cart-float');
+            if (Object.keys(cart).length === 0) {
+                floatBtn.classList.add('hidden');
+                return;
+            }
+            floatBtn.classList.remove('hidden');
             let total = 0;
-            let html = '';
-
-            Object.keys(cart).forEach(id => {
-                const item = cart[id];
-                total += item.price * item.qty;
-                html += `
-                    <div class="flex justify-between items-center bg-white/5 p-4 rounded-2xl border border-white/5">
-                        <div>
-                            <h4 class="font-bold text-white">${item.name}</h4>
-                            <p class="text-xs text-gray-500">${item.price} ₴</p>
+            const itemsHtml = Object.keys(cart).map(id => {
+                const item = menuData.find(i => i._id === id);
+                if (!item) return '';
+                total += item.price * cart[id];
+                return `
+                    <div class="flex justify-between items-center bg-gray-800 p-3 rounded-xl">
+                        <div class="flex-1">
+                            <div class="font-bold">${item.name}</div>
+                            <div class="text-sm text-gray-400">${item.price} ₴ х ${cart[id]}</div>
                         </div>
-                        <div class="flex items-center gap-4">
-                            <button onclick="updateQty('${id}', -1)" class="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center font-bold">-</button>
-                            <span class="font-bold w-4 text-center">${item.qty}</span>
-                            <button onclick="updateQty('${id}', 1)" class="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center font-bold">+</button>
+                        <div class="flex items-center space-x-3">
+                            <button onclick="changeQty('${id}', -1)" class="w-8 h-8 bg-gray-700 rounded-full font-bold">-</button>
+                            <span class="font-bold w-4 text-center">${cart[id]}</span>
+                            <button onclick="changeQty('${id}', 1)" class="w-8 h-8 bg-blue-600 rounded-full font-bold">+</button>
                         </div>
                     </div>
                 `;
-            });
-
-            container.innerHTML = html || '<p class="text-center text-gray-500 py-10">Кошик порожній...</p>';
-            document.getElementById('cart-total-bar').innerText = total + ' ₴';
-            document.getElementById('cart-total-modal').innerText = total + ' ₴';
-            cartBar.style.display = total > 0 ? 'block' : 'none';
-            localStorage.setItem('cafe_cart_' + tableId, JSON.stringify(cart));
-            if (total === 0) toggleCart(false);
+            }).join('');
+            
+            document.getElementById('cart-float-total').innerText = total;
+            document.getElementById('cart-modal-total').innerText = total;
+            document.getElementById('cart-items').innerHTML = itemsHtml;
         }
 
-        function toggleCart(show) {
-            const modal = document.getElementById('cart-modal');
-            const overlay = document.getElementById('cart-modal-overlay');
-            if (show) {
-                overlay.classList.remove('hidden');
-                setTimeout(() => modal.classList.add('active'), 10);
-            } else {
-                modal.classList.remove('active');
-                setTimeout(() => overlay.classList.add('hidden'), 300);
-            }
+        function openCart() {
+            document.getElementById('cart-modal').classList.remove('hidden');
+            document.getElementById('cart-modal').classList.add('flex');
+            setTimeout(() => { document.getElementById('cart-modal-content').classList.remove('translate-y-full'); }, 10);
         }
 
-        function filterMenu(cat) {
-            document.querySelectorAll('.menu-item').forEach(item => {
-                item.style.display = (cat === 'all' || item.dataset.category === cat) ? 'flex' : 'none';
-            });
-            document.querySelectorAll('.cat-btn').forEach(btn => {
-                btn.className = 'cat-btn px-6 py-2 rounded-full font-semibold text-sm border border-white/10 whitespace-nowrap ' + 
-                                (btn.innerText.toLowerCase() === cat.toLowerCase() ? 'bg-white text-black' : 'bg-[#1a1a1a] text-gray-400');
-            });
+        function closeCart() {
+            document.getElementById('cart-modal-content').classList.add('translate-y-full');
+            setTimeout(() => { 
+                document.getElementById('cart-modal').classList.add('hidden'); 
+                document.getElementById('cart-modal').classList.remove('flex');
+            }, 300);
         }
 
-        function confirmOrder() {
+        // Дії
+        function placeOrder() {
             if (Object.keys(cart).length === 0) return;
+            if (currentOrderId) {
+                showMsg("Увага", "Ви вже маєте активне замовлення. Дочекайтесь його завершення.");
+                return;
+            }
+            
             const btn = document.getElementById('confirm-btn');
+            btn.innerText = "Обробка...";
             btn.disabled = true;
-            btn.innerText = "Відправка...";
 
-            socket.emit('place_order', {
-                table_id: tableId,
-                items: cart
+            const orderItems = Object.keys(cart).map(id => ({ id: id, qty: cart[id] }));
+            
+            socket.emit('place_order', { table: tableId, items: orderItems }, (response) => {
+                btn.innerText = "Підтвердити замовлення";
+                btn.disabled = false;
+                if (response.success) {
+                    currentOrderId = response.order_id;
+                    localStorage.setItem('cafe_order_' + tableId, currentOrderId);
+                    cart = {};
+                    saveCart();
+                    closeCart();
+                    updateCartUI();
+                    showMsg("Успішно!", "Замовлення передано на кухню.");
+                } else {
+                    showMsg("Помилка", response.error);
+                }
             });
         }
 
         function callWaiter() {
-            socket.emit('waiter_call', { table_id: tableId });
-            alert("Офіціант уже поспішає до вас!");
+            socket.emit('call_waiter', { table: tableId });
+            showMsg("Офіціанта викликано", "Він підійде до вас найближчим часом.");
         }
 
-        socket.on('order_confirmed', (data) => {
-            if (data.table_id === tableId) {
-                localStorage.setItem('active_order_' + tableId, data.order_id);
-                activeOrderId = data.order_id;
-                cart = {};
-                localStorage.removeItem('cafe_cart_' + tableId);
-                renderCart();
-                toggleCart(false);
-                updateStatusWidget(data.status);
-            }
-        });
-
-        socket.on('status_update', (data) => {
-            if (data.order_id === activeOrderId) {
-                updateStatusWidget(data.status);
-            }
-        });
-
-        function updateStatusWidget(status) {
-            const container = document.getElementById('status-container');
-            const widget = document.getElementById('status-widget');
-            container.classList.remove('hidden');
-
-            if (status === 'new') {
-                widget.className = "p-4 rounded-2xl text-center font-bold text-sm uppercase tracking-wider bg-indigo-600 text-white shadow-lg shadow-indigo-500/20";
-                widget.innerText = "✉️ Замовлення надіслано";
-            } else if (status === 'cooking') {
-                widget.className = "p-4 rounded-2xl text-center font-bold text-sm uppercase tracking-wider bg-amber-500 text-black shadow-lg shadow-amber-500/20 blink";
-                widget.innerText = "🔥 Готується на кухні";
-            } else if (status === 'ready') {
-                widget.className = "p-4 rounded-2xl text-center font-bold text-sm uppercase tracking-wider bg-green-500 text-black shadow-lg shadow-green-500/20";
-                widget.innerText = "✅ Вже несемо до вас!";
-            } else {
-                container.classList.add('hidden');
-                localStorage.removeItem('active_order_' + tableId);
-            }
+        // Кастомна модалка
+        function showMsg(title, text) {
+            document.getElementById('msg-title').innerText = title;
+            document.getElementById('msg-text').innerText = text;
+            const m = document.getElementById('msg-modal');
+            m.classList.remove('hidden');
+            m.classList.add('flex');
+            setTimeout(() => m.classList.remove('opacity-0'), 10);
         }
-
-        // Ініціалізація
-        renderCart();
-        syncCartWithAdmin();
-        if (activeOrderId) socket.emit('get_order_status', { order_id: activeOrderId });
+        function closeMsg() {
+            const m = document.getElementById('msg-modal');
+            m.classList.add('opacity-0');
+            setTimeout(() => { m.classList.add('hidden'); m.classList.remove('flex'); }, 300);
+        }
     </script>
+</body>
+</html>
+"""
 
-    {% elif mode == 'admin' %}
-    <!-- ==========================================
-         ІНТЕРФЕЙС АДМІНІСТРАТОРА
-    =========================================== -->
+# 3. Шаблон Адміна (Десктоп Dashboard)
+ADMIN_HTML = """
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Панель Моніторингу</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <style>
+        .blink { animation: blinker 1.5s linear infinite; }
+        @keyframes blinker { 50% { border-color: transparent; } }
+        .modal-overlay { background: rgba(0,0,0,0.6); }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 font-sans">
+    
     <div class="flex h-screen overflow-hidden">
-        <!-- Бокова панель -->
-        <aside class="w-72 bg-[#1a1a1a] border-r border-white/10 p-6 flex flex-col gap-8">
-            <div class="text-2xl font-black italic text-indigo-500 tracking-tighter">ADMIN PANEL</div>
-            
-            <nav class="flex flex-col gap-2">
-                <button onclick="switchTab('orders')" class="nav-btn w-full text-left p-4 rounded-xl bg-indigo-600 text-white font-bold flex items-center gap-3 transition">
-                    📋 Поточні замовлення
-                </button>
-                <button onclick="switchTab('menu')" class="nav-btn w-full text-left p-4 rounded-xl text-gray-400 hover:bg-white/5 font-bold flex items-center gap-3 transition">
-                    🍔 Конструктор меню
-                </button>
-                <button onclick="switchTab('devices')" class="nav-btn w-full text-left p-4 rounded-xl text-gray-400 hover:bg-white/5 font-bold flex items-center gap-3 transition">
-                    📱 Пристрої (Live)
-                </button>
+        <!-- Навігація -->
+        <aside class="w-64 bg-gray-900 text-white flex flex-col">
+            <div class="p-6 text-2xl font-bold border-b border-gray-800">Cafe System</div>
+            <nav class="flex-1 p-4 space-y-2">
+                <button onclick="switchTab('orders')" id="tab-orders" class="w-full text-left p-3 rounded bg-blue-600 font-bold">Поточні замовлення</button>
+                <button onclick="switchTab('menu')" id="tab-menu" class="w-full text-left p-3 rounded hover:bg-gray-800 transition">Конструктор меню</button>
+                <button onclick="switchTab('devices')" id="tab-devices" class="w-full text-left p-3 rounded hover:bg-gray-800 transition">Пристрої (Живий Ефір)</button>
             </nav>
-
-            <div class="mt-auto p-4 bg-black/30 rounded-2xl border border-white/5">
-                <p class="text-[10px] uppercase text-gray-500 tracking-widest mb-1">Статус сервера</p>
-                <div class="flex items-center gap-2">
-                    <div class="w-2 h-2 rounded-full bg-green-500"></div>
-                    <span class="text-xs font-bold">ONLINE</span>
-                </div>
-            </div>
+            <div class="p-4 border-t border-gray-800"><a href="/logout" class="text-red-400 hover:text-red-300">Вийти</a></div>
         </aside>
 
-        <!-- Основна зона -->
-        <main class="flex-1 overflow-y-auto p-8 scroll-hide">
-            
+        <!-- Головна зона -->
+        <main class="flex-1 flex flex-col h-full overflow-hidden">
             <!-- Статистика -->
-            <div id="stats-bar" class="grid grid-cols-4 gap-6 mb-10">
-                <div class="dark-card p-6 border-l-4 border-green-500">
-                    <p class="text-xs text-gray-500 uppercase font-bold tracking-widest mb-2">Каса</p>
-                    <h2 id="stat-revenue" class="text-3xl font-black">0 ₴</h2>
+            <header class="bg-white shadow p-6 flex justify-between gap-4 z-10">
+                <div class="bg-green-100 p-4 rounded-xl flex-1 border border-green-200">
+                    <div class="text-sm text-green-700 font-bold">Каса (Закриті)</div>
+                    <div class="text-3xl font-bold text-green-900"><span id="stat-revenue">0</span> ₴</div>
                 </div>
-                <div class="dark-card p-6 border-l-4 border-amber-500">
-                    <p class="text-xs text-gray-500 uppercase font-bold tracking-widest mb-2">В черзі</p>
-                    <h2 id="stat-queue" class="text-3xl font-black">0</h2>
+                <div class="bg-yellow-100 p-4 rounded-xl flex-1 border border-yellow-200">
+                    <div class="text-sm text-yellow-700 font-bold">В черзі кухарів</div>
+                    <div class="text-3xl font-bold text-yellow-900" id="stat-cooking">0</div>
                 </div>
-                <div class="dark-card p-6 border-l-4 border-indigo-500">
-                    <p class="text-xs text-gray-500 uppercase font-bold tracking-widest mb-2">Всього чеків</p>
-                    <h2 id="stat-total" class="text-3xl font-black">0</h2>
+                <div class="bg-blue-100 p-4 rounded-xl flex-1 border border-blue-200">
+                    <div class="text-sm text-blue-700 font-bold">Всього чеків</div>
+                    <div class="text-3xl font-bold text-blue-900" id="stat-total-orders">0</div>
                 </div>
-                <div class="dark-card p-6 border-l-4 border-purple-500">
-                    <p class="text-xs text-gray-500 uppercase font-bold tracking-widest mb-2">Топ продажів</p>
-                    <h2 id="stat-top" class="text-sm font-black text-gray-300">---</h2>
+                <div class="bg-purple-100 p-4 rounded-xl flex-1 border border-purple-200">
+                    <div class="text-sm text-purple-700 font-bold">Топ продажів</div>
+                    <div class="text-xl font-bold text-purple-900 mt-2" id="stat-top-item">-</div>
                 </div>
-            </div>
+            </header>
 
-            <!-- Вкладка: Замовлення -->
-            <div id="tab-orders" class="tab-content">
-                <h2 class="text-2xl font-black mb-6">Живий потік замовлень</h2>
-                <div id="admin-orders-list" class="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                    <!-- Картки замовлень -->
+            <!-- Вкладки контенту -->
+            <div class="flex-1 p-6 overflow-y-auto">
+                <!-- Вкладка 1: Замовлення -->
+                <div id="view-orders" class="h-full">
+                    <h2 class="text-2xl font-bold mb-4">Активні замовлення</h2>
+                    <div id="orders-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
                 </div>
-            </div>
 
-            <!-- Вкладка: Меню -->
-            <div id="tab-menu" class="tab-content hidden">
-                <div class="flex justify-between items-center mb-8">
-                    <h2 class="text-2xl font-black">Керування стравами</h2>
-                    <button onclick="openMenuModal()" class="bg-indigo-600 px-6 py-3 rounded-xl font-bold text-sm">Додати страву</button>
+                <!-- Вкладка 2: Меню -->
+                <div id="view-menu" class="hidden h-full flex gap-6">
+                    <div class="flex-1 bg-white p-6 rounded shadow overflow-y-auto">
+                        <h2 class="text-xl font-bold mb-4">Список страв</h2>
+                        <div id="admin-menu-list" class="space-y-3"></div>
+                    </div>
+                    <div class="w-1/3 bg-white p-6 rounded shadow">
+                        <h2 class="text-xl font-bold mb-4" id="menu-form-title">Додати страву</h2>
+                        <form id="menu-form" onsubmit="saveMenuItem(event)">
+                            <input type="hidden" id="menu-id">
+                            <div class="mb-3"><label class="block text-sm font-bold mb-1">Назва</label><input type="text" id="menu-name" required class="w-full border p-2 rounded"></div>
+                            <div class="mb-3"><label class="block text-sm font-bold mb-1">Ціна (₴)</label><input type="number" id="menu-price" required class="w-full border p-2 rounded"></div>
+                            <div class="mb-3"><label class="block text-sm font-bold mb-1">Категорія</label><input type="text" id="menu-category" required class="w-full border p-2 rounded"></div>
+                            <div class="mb-4"><label class="block text-sm font-bold mb-1">Опис (інгредієнти)</label><textarea id="menu-desc" class="w-full border p-2 rounded"></textarea></div>
+                            <button type="submit" class="w-full bg-blue-600 text-white p-3 rounded font-bold hover:bg-blue-700">Зберегти у хмару</button>
+                            <button type="button" onclick="resetMenuForm()" class="w-full mt-2 bg-gray-200 text-gray-800 p-2 rounded hover:bg-gray-300">Очистити форму</button>
+                        </form>
+                    </div>
                 </div>
-                <div id="admin-menu-list" class="grid grid-cols-1 gap-4">
-                    <!-- Елементи меню -->
-                </div>
-            </div>
 
-            <!-- Вкладка: Пристрої -->
-            <div id="tab-devices" class="tab-content hidden">
-                <h2 class="text-2xl font-black mb-6">Активні сесії (Живий Ефір)</h2>
-                <div id="admin-devices-list" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                    <!-- Картки девайсів -->
+                <!-- Вкладка 3: Живий ефір -->
+                <div id="view-devices" class="hidden h-full">
+                    <h2 class="text-2xl font-bold mb-4 flex items-center">
+                        <span class="w-3 h-3 bg-red-500 rounded-full mr-2 animate-pulse"></span> Підключені гості
+                    </h2>
+                    <div id="devices-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
                 </div>
             </div>
         </main>
     </div>
 
-    <!-- Модалка меню -->
-    <div id="menu-modal" class="fixed inset-0 bg-black/90 z-[100] hidden items-center justify-center p-6 backdrop-blur-md">
-        <div class="dark-card w-full max-w-lg p-8">
-            <h3 class="text-2xl font-bold mb-6">Параметри страви</h3>
-            <div class="space-y-4">
-                <input type="text" id="m-name" placeholder="Назва страви" class="w-full bg-black/40 border border-white/10 p-4 rounded-xl outline-none focus:border-indigo-500">
-                <input type="number" id="m-price" placeholder="Ціна (₴)" class="w-full bg-black/40 border border-white/10 p-4 rounded-xl outline-none focus:border-indigo-500">
-                <input type="text" id="m-cat" placeholder="Категорія (Кава, Десерти...)" class="w-full bg-black/40 border border-white/10 p-4 rounded-xl outline-none focus:border-indigo-500">
-                <textarea id="m-desc" placeholder="Опис інгредієнтів" class="w-full bg-black/40 border border-white/10 p-4 rounded-xl outline-none focus:border-indigo-500 h-32"></textarea>
-                <div class="flex gap-4 pt-4">
-                    <button onclick="closeMenuModal()" class="flex-1 bg-white/5 py-4 rounded-xl font-bold">Скасувати</button>
-                    <button onclick="saveMenuItem()" class="flex-1 accent-gradient py-4 rounded-xl font-bold shadow-lg shadow-indigo-500/20">Зберегти</button>
-                </div>
-            </div>
+    <!-- Модалка виклику офіціанта -->
+    <div id="waiter-modal" class="fixed inset-0 z-50 hidden items-center justify-center modal-overlay">
+        <div class="bg-red-600 text-white p-8 rounded-xl shadow-2xl text-center w-96 transform scale-100">
+            <h2 class="text-4xl font-bold mb-4">ВИКЛИК!</h2>
+            <p class="text-2xl mb-6">Стіл <span id="waiter-table" class="font-black text-4xl"></span></p>
+            <button onclick="document.getElementById('waiter-modal').classList.add('hidden')" class="bg-white text-red-600 font-bold px-8 py-3 rounded-full text-xl hover:bg-gray-100">Прийнято</button>
         </div>
     </div>
+    
+    <!-- Аудіо для сповіщень -->
+    <audio id="audio-alert" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
+    <audio id="audio-waiter" src="https://assets.mixkit.co/active_storage/sfx/995/995-preview.mp3" preload="auto"></audio>
 
     <script>
         const socket = io();
-        let currentTab = 'orders';
+        let orders = [];
+        let menuItems = [];
+        let liveDevices = {};
 
-        function switchTab(tabId) {
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
-            document.getElementById('tab-' + tabId).classList.remove('hidden');
-            document.querySelectorAll('.nav-btn').forEach(btn => {
-                btn.classList.remove('bg-indigo-600', 'text-white');
-                btn.classList.add('text-gray-400');
-            });
-            event.currentTarget.classList.add('bg-indigo-600', 'text-white');
-            currentTab = tabId;
-            if (tabId === 'menu') loadMenu();
-        }
+        socket.on('connect', () => { socket.emit('admin_join'); socket.emit('get_admin_data'); });
 
-        // Завантаження замовлень
-        socket.on('update_admin_orders', (data) => {
-            const list = document.getElementById('admin-orders-list');
-            let html = '';
-            let revenue = 0;
-            let queue = 0;
-
-            data.orders.forEach(order => {
-                if (order.status === 'completed') revenue += order.total;
-                else queue++;
-
-                if (order.status !== 'completed') {
-                    html += `
-                        <div class="dark-card p-6 flex flex-col gap-4 border-t-4 ${order.status === 'new' ? 'border-indigo-500 blink' : 'border-amber-500'}">
-                            <div class="flex justify-between items-center">
-                                <span class="text-2xl font-black italic">Стіл #${order.table_id}</span>
-                                <span class="text-[10px] text-gray-500">${order.time}</span>
-                            </div>
-                            <div class="space-y-2 py-4 border-y border-white/5">
-                                ${Object.values(order.items).map(item => `
-                                    <div class="flex justify-between text-sm">
-                                        <span class="text-gray-300 font-semibold">${item.name}</span>
-                                        <span class="font-black">x${item.qty}</span>
-                                    </div>
-                                `).join('')}
-                            </div>
-                            <div class="flex justify-between items-center mb-2">
-                                <span class="text-xs uppercase font-bold text-gray-500 tracking-widest">Разом:</span>
-                                <span class="text-xl font-black">${order.total} ₴</span>
-                            </div>
-                            <div class="grid grid-cols-3 gap-2">
-                                <button onclick="changeStatus('${order._id}', 'cooking')" class="bg-amber-500/10 text-amber-500 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-amber-500 hover:text-black transition">Кухня</button>
-                                <button onclick="changeStatus('${order._id}', 'ready')" class="bg-green-500/10 text-green-500 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-green-500 hover:text-black transition">Готово</button>
-                                <button onclick="changeStatus('${order._id}', 'completed')" class="bg-indigo-500/10 text-indigo-500 py-2 rounded-lg text-[10px] font-black uppercase hover:bg-indigo-500 hover:text-white transition">Закрити</button>
-                            </div>
-                        </div>
-                    `;
-                }
-            });
-
-            list.innerHTML = html || '<div class="col-span-full py-20 text-center text-gray-600 font-bold uppercase tracking-widest">Замовлень немає</div>';
-            document.getElementById('stat-revenue').innerText = revenue + ' ₴';
-            document.getElementById('stat-queue').innerText = queue;
-            document.getElementById('stat-total').innerText = data.orders.length;
+        socket.on('admin_init_data', (data) => {
+            orders = data.orders;
+            menuItems = data.menu;
+            liveDevices = data.live_users;
+            updateDashboard();
+            renderOrders();
+            renderMenuAdmin();
+            renderDevices();
         });
 
-        // Живі пристрої
-        socket.on('update_devices', (sessions) => {
-            const list = document.getElementById('admin-devices-list');
-            list.innerHTML = Object.entries(sessions).map(([sid, data]) => `
-                <div class="dark-card p-4 relative overflow-hidden">
-                    <div class="absolute top-2 right-2 w-2 h-2 rounded-full bg-green-500"></div>
-                    <p class="text-[10px] font-black text-indigo-400 mb-1">Стіл #${data.table_id}</p>
-                    <h4 class="text-xs font-bold text-gray-300 mb-3 truncate">${data.device.split(' ')[0]}</h4>
-                    <div class="space-y-1">
-                        ${Object.values(data.cart).map(i => `
-                            <div class="flex justify-between text-[10px] opacity-60">
-                                <span>${i.name}</span>
-                                <span>x${i.qty}</span>
-                            </div>
-                        `).join('') || '<p class="text-[10px] text-gray-600 italic">Кошик порожній</p>'}
+        socket.on('new_order_alert', (order) => {
+            orders.unshift(order);
+            playSound('audio-alert');
+            updateDashboard();
+            renderOrders();
+        });
+
+        socket.on('waiter_called', (data) => {
+            playSound('audio-waiter');
+            document.getElementById('waiter-table').innerText = '#' + data.table;
+            document.getElementById('waiter-modal').classList.remove('hidden');
+            document.getElementById('waiter-modal').classList.add('flex');
+        });
+
+        socket.on('live_users_update', (users) => {
+            liveDevices = users;
+            renderDevices();
+        });
+
+        socket.on('menu_data', (data) => {
+            menuItems = data;
+            renderMenuAdmin();
+        });
+
+        // Навігація
+        function switchTab(tab) {
+            ['orders', 'menu', 'devices'].forEach(t => {
+                document.getElementById('view-' + t).classList.add('hidden');
+                document.getElementById('tab-' + t).classList.replace('bg-blue-600', 'hover:bg-gray-800');
+            });
+            document.getElementById('view-' + tab).classList.remove('hidden');
+            document.getElementById('tab-' + tab).classList.replace('hover:bg-gray-800', 'bg-blue-600');
+        }
+
+        // Рендер Замовлень
+        function renderOrders() {
+            const container = document.getElementById('orders-container');
+            const active = orders.filter(o => o.status !== 'Закрито');
+            container.innerHTML = active.map(o => {
+                const isNew = o.status === 'Нове';
+                const cardBorder = isNew ? 'border-4 border-blue-500 blink' : 'border border-gray-200';
+                const itemsHtml = o.items.map(i => `<div class="flex justify-between text-sm py-1 border-b"><span class="font-bold">${i.name}</span><span>${i.qty} шт</span></div>`).join('');
+                
+                return `
+                <div class="bg-white rounded-xl shadow p-5 ${cardBorder}">
+                    <div class="flex justify-between items-center mb-4 pb-2 border-b-2">
+                        <div class="text-2xl font-black">Стіл #${o.table}</div>
+                        <div class="text-gray-500 text-sm">${new Date(o.timestamp.$date || o.timestamp).toLocaleTimeString()}</div>
+                    </div>
+                    <div class="mb-4 h-32 overflow-y-auto">${itemsHtml}</div>
+                    <div class="text-xl font-bold mb-4 text-right">Сума: ${o.total} ₴</div>
+                    <div class="flex gap-2">
+                        ${isNew ? `<button onclick="changeStatus('${o._id}', 'Готується')" class="flex-1 bg-yellow-500 text-white font-bold py-2 rounded hover:bg-yellow-600">На Кухню</button>` : ''}
+                        ${o.status === 'Готується' ? `<button onclick="changeStatus('${o._id}', 'Готово')" class="flex-1 bg-green-500 text-white font-bold py-2 rounded hover:bg-green-600">Готово (Видача)</button>` : ''}
+                        ${o.status === 'Готово' ? `<button onclick="changeStatus('${o._id}', 'Закрито')" class="flex-1 bg-gray-800 text-white font-bold py-2 rounded hover:bg-gray-900">Сплачено (Закрити)</button>` : ''}
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function changeStatus(orderId, newStatus) {
+            socket.emit('admin_change_status', { order_id: orderId, status: newStatus });
+            const order = orders.find(o => o._id === orderId);
+            if (order) order.status = newStatus;
+            updateDashboard();
+            renderOrders();
+        }
+
+        // Рендер Меню
+        function renderMenuAdmin() {
+            const container = document.getElementById('admin-menu-list');
+            container.innerHTML = menuItems.map(m => `
+                <div class="border rounded p-4 flex justify-between items-center hover:bg-gray-50">
+                    <div>
+                        <div class="font-bold text-lg">${m.name} <span class="text-sm font-normal text-gray-500 ml-2">(${m.category})</span></div>
+                        <div class="text-gray-600 text-sm">${m.price} ₴</div>
+                    </div>
+                    <div class="space-x-2">
+                        <button onclick="editMenu('${m._id}')" class="bg-yellow-100 text-yellow-700 px-3 py-1 rounded font-bold hover:bg-yellow-200">Правка</button>
+                        <button onclick="deleteMenu('${m._id}')" class="bg-red-100 text-red-700 px-3 py-1 rounded font-bold hover:bg-red-200">Видалити</button>
                     </div>
                 </div>
             `).join('');
-        });
-
-        function changeStatus(id, status) {
-            socket.emit('admin_change_status', { order_id: id, status: status });
         }
 
-        // Керування меню через базу
-        function loadMenu() {
-            fetch('/api/menu').then(r => r.json()).then(data => {
-                const list = document.getElementById('admin-menu-list');
-                list.innerHTML = data.map(item => `
-                    <div class="dark-card p-4 flex justify-between items-center">
-                        <div>
-                            <span class="text-[10px] uppercase font-bold text-gray-600 tracking-widest">${item.category}</span>
-                            <h4 class="font-bold text-white text-lg">${item.name}</h4>
-                            <p class="text-xs text-indigo-400 font-black">${item.price} ₴</p>
-                        </div>
-                        <div class="flex gap-2">
-                            <button onclick="deleteMenuItem('${item._id}')" class="bg-red-500/10 text-red-500 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-red-500 hover:text-white transition">Видалити</button>
-                        </div>
-                    </div>
-                `).join('');
-            });
+        function editMenu(id) {
+            const item = menuItems.find(m => m._id === id);
+            document.getElementById('menu-id').value = item._id;
+            document.getElementById('menu-name').value = item.name;
+            document.getElementById('menu-price').value = item.price;
+            document.getElementById('menu-category').value = item.category;
+            document.getElementById('menu-desc').value = item.description;
+            document.getElementById('menu-form-title').innerText = "Редагувати страву";
         }
 
-        function openMenuModal() { document.getElementById('menu-modal').classList.replace('hidden', 'flex'); }
-        function closeMenuModal() { document.getElementById('menu-modal').classList.replace('flex', 'hidden'); }
+        function deleteMenu(id) {
+            socket.emit('admin_delete_menu', { id: id });
+        }
 
-        function saveMenuItem() {
+        function resetMenuForm() {
+            document.getElementById('menu-id').value = '';
+            document.getElementById('menu-form').reset();
+            document.getElementById('menu-form-title').innerText = "Додати страву";
+        }
+
+        function saveMenuItem(e) {
+            e.preventDefault();
             const data = {
-                name: document.getElementById('m-name').value,
-                price: parseFloat(document.getElementById('m-price').value),
-                category: document.getElementById('m-cat').value,
-                description: document.getElementById('m-desc').value
+                id: document.getElementById('menu-id').value,
+                name: document.getElementById('menu-name').value,
+                price: parseFloat(document.getElementById('menu-price').value),
+                category: document.getElementById('menu-category').value,
+                description: document.getElementById('menu-desc').value
             };
-            fetch('/api/menu', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(data)
-            }).then(() => {
-                closeMenuModal();
-                loadMenu();
-            });
+            socket.emit('admin_save_menu', data);
+            resetMenuForm();
         }
 
-        function deleteMenuItem(id) {
-            fetch('/api/menu/' + id, {method: 'DELETE'}).then(() => loadMenu());
+        // Рендер Живих Пристроїв
+        function renderDevices() {
+            const container = document.getElementById('devices-container');
+            const devices = Object.values(liveDevices);
+            if (devices.length === 0) {
+                container.innerHTML = '<div class="col-span-3 text-center text-gray-400 mt-10">Немає активних клієнтів</div>';
+                return;
+            }
+            container.innerHTML = devices.map(d => {
+                let cartHtml = '<div class="text-gray-400 text-sm italic">Кошик порожній</div>';
+                if (d.cart && d.cart.length > 0) {
+                    const total = d.cart.reduce((sum, item) => sum + (item.price * item.qty), 0);
+                    cartHtml = `
+                        <div class="bg-gray-100 p-2 rounded mt-2 text-sm">
+                            <div class="font-bold text-gray-700 border-b pb-1 mb-1">Збирає кошик:</div>
+                            ${d.cart.map(i => `<div class="flex justify-between"><span>${i.name} x${i.qty}</span><span>${i.price * i.qty} ₴</span></div>`).join('')}
+                            <div class="text-right font-bold mt-1 pt-1 border-t">Проміжно: ${total} ₴</div>
+                        </div>`;
+                }
+                
+                const os = d.ua.toLowerCase().includes('iphone') ? 'iPhone Apple' : (d.ua.toLowerCase().includes('android') ? 'Android Phone' : 'Windows/Mac PC');
+                
+                return `
+                <div class="bg-white rounded shadow border-l-4 border-green-500 p-4 relative">
+                    <div class="absolute top-2 right-2 w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
+                    <div class="font-black text-xl mb-1">Стіл #${d.table}</div>
+                    <div class="text-xs text-gray-500 mb-3">${os} | Останній клік: ${d.last_seen}</div>
+                    <div class="text-sm bg-blue-50 text-blue-800 p-2 rounded mb-2 border border-blue-100">Переглядає: <b>${d.category || 'Всі'}</b></div>
+                    ${cartHtml}
+                </div>`;
+            }).join('');
         }
 
-        socket.on('alert_waiter', (data) => {
-            const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3');
-            audio.play();
-            alert("⚠️ ВИКЛИК ОФІЦІАНТА: СТІЛ #" + data.table_id);
-        });
+        function updateDashboard() {
+            const closed = orders.filter(o => o.status === 'Закрито');
+            const cooking = orders.filter(o => o.status === 'Готується').length;
+            const revenue = closed.reduce((sum, o) => sum + o.total, 0);
+            
+            document.getElementById('stat-revenue').innerText = revenue;
+            document.getElementById('stat-cooking').innerText = cooking;
+            document.getElementById('stat-total-orders').innerText = orders.length;
+
+            // Топ продажів (проста логіка)
+            const itemCounts = {};
+            orders.forEach(o => o.items.forEach(i => { itemCounts[i.name] = (itemCounts[i.name] || 0) + i.qty; }));
+            let topItem = "-", maxCount = 0;
+            for (const [name, count] of Object.entries(itemCounts)) {
+                if (count > maxCount) { maxCount = count; topItem = name; }
+            }
+            document.getElementById('stat-top-item').innerText = topItem;
+        }
+
+        function playSound(id) {
+            const el = document.getElementById(id);
+            if (el) { el.currentTime = 0; el.play().catch(e => console.log('Аудіо заблоковано браузером до першого кліку')); }
+        }
     </script>
-    {% endif %}
-
 </body>
 </html>
 """
 
-# ==========================================
-# BACKEND ЛОГІКА (Маршрути та Сокети)
-# ==========================================
+# === ДОПОМІЖНІ ФУНКЦІЇ ===
+def serialize_doc(doc):
+    if '_id' in doc: doc['_id'] = str(doc['_id'])
+    if 'timestamp' in doc: doc['timestamp'] = doc['timestamp'].isoformat()
+    return doc
 
+def get_current_time_str():
+    return datetime.now().strftime("%H:%M:%S")
+
+# === FLASK РОУТИ ===
 @app.route('/')
-@app.route('/table/<table_id>')
-def client_index(table_id="1"):
-    menu = list(menu_col.find())
-    for item in menu: item['_id'] = str(item['_id'])
-    categories = sorted(list(set(item['category'] for item in menu)))
-    return render_template_string(BASE_HTML, mode='client', table_id=table_id, menu=menu, categories=categories)
+def index():
+    table = request.args.get('table', '1') # По дефолту стіл 1, якщо не вказано ?table=...
+    return render_template_string(CLIENT_HTML, table=table)
 
 @app.route('/admin')
-def admin_panel():
-    if not session.get('is_admin'):
-        return f"""
-        <body style="background:#000;color:#fff;display:flex;align-items:center;justify-center;height:100vh;font-family:sans-serif;">
-            <form action="/admin/login" method="POST" style="background:#111;padding:40px;border-radius:20px;border:1px solid #333;">
-                <h2 style="margin-bottom:20px;">Вхід в систему</h2>
-                <input type="password" name="password" placeholder="Пароль" style="background:#222;border:1px solid #444;color:#fff;padding:12px;width:250px;border-radius:10px;margin-bottom:15px;display:block;">
-                <button type="submit" style="background:#6366f1;color:#fff;border:none;padding:12px;width:100%;border-radius:10px;font-weight:bold;cursor:pointer;">Увійти</button>
-            </form>
-        </body>
-        """
-    return render_template_string(BASE_HTML, mode='admin')
+def admin():
+    if not session.get('admin_logged_in'):
+        return redirect(url_for('login'))
+    return render_template_string(ADMIN_HTML)
 
-@app.route('/admin/login', methods=['POST'])
-def admin_login():
-    if request.form.get('password') == ADMIN_PASSWORD:
-        session['is_admin'] = True
-        return redirect(url_for('admin_panel'))
-    return "Пароль невірний. <a href='/admin'>Назад</a>"
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        if request.form.get('password') == ADMIN_PASSWORD:
+            session['admin_logged_in'] = True
+            return redirect(url_for('admin'))
+        return "Невірний пароль. <a href='/login'>Назад</a>"
+    return render_template_string(LOGIN_HTML)
 
-# API для керування меню
-@app.route('/api/menu', methods=['GET', 'POST'])
-def api_menu():
-    if request.method == 'GET':
-        items = list(menu_col.find())
-        for i in items: i['_id'] = str(i['_id'])
-        return items
-    if session.get('is_admin'):
-        data = request.json
-        menu_col.insert_one(data)
-        return {"status": "ok"}
+@app.route('/logout')
+def logout():
+    session.pop('admin_logged_in', None)
+    return redirect(url_for('login'))
 
-@app.route('/api/menu/<id>', methods=['DELETE'])
-def api_delete_menu(id):
-    if session.get('is_admin'):
-        menu_col.delete_one({'_id': ObjectId(id)})
-        return {"status": "ok"}
 
-# СОКЕТИ ДЛЯ РЕАЛЬНОГО ЧАСУ
-active_sessions = {}
+# === SOCKET.IO ПОДІЇ (РЕАЛЬНИЙ ЧАС) ===
 
-@socketio.on('connect')
-def handle_connect():
-    # Надсилаємо актуальні замовлення адміну при підключенні
-    orders = list(orders_col.find().sort('time', -1))
-    for o in orders: o['_id'] = str(o['_id'])
-    emit('update_admin_orders', {'orders': orders}, broadcast=True)
-
-@socketio.on('update_live_cart')
-def handle_cart_sync(data):
+@socketio.on('client_join')
+def handle_client_join(data):
     sid = request.sid
-    active_sessions[sid] = {
-        'table_id': data['table_id'],
-        'cart': data['cart'],
-        'device': data['device']
+    live_users[sid] = {
+        'table': data.get('table'),
+        'ua': data.get('user_agent', 'Unknown'),
+        'last_seen': get_current_time_str(),
+        'category': 'Всі',
+        'cart': []
     }
-    emit('update_devices', active_sessions, broadcast=True)
+    join_room(f"table_{data.get('table')}")
+    socketio.emit('live_users_update', live_users, room='admin')
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    if request.sid in active_sessions:
-        del active_sessions[request.sid]
-        emit('update_devices', active_sessions, broadcast=True)
+    sid = request.sid
+    if sid in live_users:
+        del live_users[sid]
+        socketio.emit('live_users_update', live_users, room='admin')
+
+@socketio.on('get_menu')
+def send_menu():
+    items = [serialize_doc(i) for i in db.menu.find()]
+    emit('menu_data', items)
+
+@socketio.on('live_update')
+def handle_live_update(data):
+    sid = request.sid
+    if sid in live_users:
+        if data.get('action') == 'view_category':
+            live_users[sid]['category'] = data.get('category')
+        elif data.get('action') == 'cart':
+            live_users[sid]['cart'] = data.get('cart')
+        live_users[sid]['last_seen'] = get_current_time_str()
+        socketio.emit('live_users_update', live_users, room='admin')
+
+@socketio.on('call_waiter')
+def handle_call_waiter(data):
+    socketio.emit('waiter_called', {'table': data.get('table')}, room='admin')
 
 @socketio.on('place_order')
-def handle_order(data):
-    # Розрахунок ціни на бекенді (БЕЗПЕКА)
+def handle_place_order(data):
+    table = data.get('table')
+    client_items = data.get('items', [])
+    
+    if not client_items:
+        return {'success': False, 'error': 'Кошик порожній'}
+
+    # БЕЗПЕКА: Прорахунок суми виключно на сервері через БД
     total = 0
-    items_verified = {}
-    for item_id, cart_data in data['items'].items():
-        db_item = menu_col.find_one({'_id': ObjectId(item_id)})
+    order_items_db = []
+    
+    for c_item in client_items:
+        db_item = db.menu.find_one({"_id": ObjectId(c_item['id'])})
         if db_item:
-            price = db_item['price']
-            total += price * cart_data['qty']
-            items_verified[item_id] = {
+            qty = int(c_item['qty'])
+            total += db_item['price'] * qty
+            order_items_db.append({
+                'id': str(db_item['_id']),
                 'name': db_item['name'],
-                'price': price,
-                'qty': cart_data['qty']
-            }
-    
-    order = {
-        'table_id': data['table_id'],
-        'items': items_verified,
+                'price': db_item['price'],
+                'qty': qty
+            })
+            
+    if total == 0:
+        return {'success': False, 'error': 'Помилка товарів'}
+
+    new_order = {
+        'table': table,
+        'items': order_items_db,
         'total': total,
-        'status': 'new',
-        'time': datetime.now().strftime("%H:%M:%S")
+        'status': 'Нове',
+        'timestamp': datetime.now()
     }
-    res = orders_col.insert_one(order)
-    order_id = str(res.inserted_id)
     
-    emit('order_confirmed', {'table_id': data['table_id'], 'order_id': order_id, 'status': 'new'}, broadcast=True)
+    res = db.orders.insert_one(new_order)
+    order_id_str = str(res.inserted_id)
+    new_order['_id'] = order_id_str
+    new_order = serialize_doc(new_order)
+
+    # Сповіщаємо адміна
+    socketio.emit('new_order_alert', new_order, room='admin')
     
-    # Оновлення списку в адміна
-    orders = list(orders_col.find().sort('time', -1))
-    for o in orders: o['_id'] = str(o['_id'])
-    emit('update_admin_orders', {'orders': orders}, broadcast=True)
+    # Очищаємо живий кошик для цього користувача
+    sid = request.sid
+    if sid in live_users:
+        live_users[sid]['cart'] = []
+        socketio.emit('live_users_update', live_users, room='admin')
+
+    return {'success': True, 'order_id': order_id_str}
+
+@socketio.on('check_order_status')
+def check_order_status(data):
+    order = db.orders.find_one({"_id": ObjectId(data['order_id'])})
+    if order:
+        emit('order_status_update', {'order_id': str(order['_id']), 'status': order['status']})
+
+# --- АДМІНСЬКІ СОКЕТИ ---
+
+@socketio.on('admin_join')
+def admin_join():
+    join_room('admin')
+
+@socketio.on('get_admin_data')
+def send_admin_data():
+    orders = [serialize_doc(o) for o in list(db.orders.find().sort("timestamp", -1))]
+    menu = [serialize_doc(i) for i in db.menu.find()]
+    emit('admin_init_data', {'orders': orders, 'menu': menu, 'live_users': live_users})
 
 @socketio.on('admin_change_status')
-def change_status(data):
-    orders_col.update_one({'_id': ObjectId(data['order_id'])}, {'$set': {'status': data['status']}})
-    emit('status_update', {'order_id': data['order_id'], 'status': data['status']}, broadcast=True)
+def admin_change_status(data):
+    order_id = data.get('order_id')
+    new_status = data.get('status')
     
-    orders = list(orders_col.find().sort('time', -1))
-    for o in orders: o['_id'] = str(o['_id'])
-    emit('update_admin_orders', {'orders': orders}, broadcast=True)
-
-@socketio.on('get_order_status')
-def get_status(data):
-    order = orders_col.find_one({'_id': ObjectId(data['order_id'])})
+    db.orders.update_one({"_id": ObjectId(order_id)}, {"$set": {"status": new_status}})
+    order = db.orders.find_one({"_id": ObjectId(order_id)})
+    
     if order:
-        emit('status_update', {'order_id': data['order_id'], 'status': order['status']})
+        # Відправляємо оновлення конкретному столу
+        socketio.emit('order_status_update', {'order_id': order_id, 'status': new_status}, room=f"table_{order['table']}")
 
-@socketio.on('waiter_call')
-def waiter_call(data):
-    emit('alert_waiter', {'table_id': data['table_id']}, broadcast=True)
+@socketio.on('admin_save_menu')
+def admin_save_menu(data):
+    menu_data = {
+        'name': data['name'],
+        'price': float(data['price']),
+        'category': data['category'],
+        'description': data['description']
+    }
+    
+    if data.get('id'):
+        db.menu.update_one({"_id": ObjectId(data['id'])}, {"$set": menu_data})
+    else:
+        db.menu.insert_one(menu_data)
+        
+    updated_menu = [serialize_doc(i) for i in db.menu.find()]
+    socketio.emit('menu_data', updated_menu) # Оновлюємо у всіх клієнтів миттєво
 
+@socketio.on('admin_delete_menu')
+def admin_delete_menu(data):
+    db.menu.delete_one({"_id": ObjectId(data['id'])})
+    updated_menu = [serialize_doc(i) for i in db.menu.find()]
+    socketio.emit('menu_data', updated_menu)
+
+
+# === ЗАПУСК ===
 if __name__ == '__main__':
-    socketio.run(app, debug=True, port=5000)
+    # Створюємо тестове меню, якщо база порожня
+    if db.menu.count_documents({}) == 0:
+        db.menu.insert_many([
+            {"name": "Капучино", "price": 65, "category": "Кава", "description": "Класичний з молоком (250мл)"},
+            {"name": "Еспресо", "price": 40, "category": "Кава", "description": "Міцна арабіка (30мл)"},
+            {"name": "Круасан", "price": 75, "category": "Випічка", "description": "З шоколадом (120г)"},
+            {"name": "Чизкейк", "price": 95, "category": "Десерти", "description": "Нью-Йорк (150г)"}
+        ])
+    
+    print("Сервер запущено! Адмінка: http://127.0.0.1:5000/admin (Пароль: admin123)")
+    print("Меню клієнта (Стіл 3): http://127.0.0.1:5000/?table=3")
+    
+    socketio.run(app, debug=True, host='0.0.0.1', port=5000, allow_unsafe_werkzeug=True)
