@@ -11,20 +11,17 @@ from flask_socketio import SocketIO, emit, join_room
 from pymongo import MongoClient
 
 # ==============================================================================
-# 1. CORE SYSTEM & SECURITY INITIALIZATION
+# 1. CORE SYSTEM INITIALIZATION
 # ==============================================================================
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'nexus-ultra-secure-key-2026')
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'nexus-omega-ultra-key-2026')
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/cafe_db')
-ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'admin123')
+ADMIN_PASSWORD = "1111"  # Встановлено твій пароль
 
 client = MongoClient(MONGO_URI)
 db = client.get_default_database(default='cafe_db')
-
-# In-memory storage for real-time monitoring
-active_sessions = {}
 
 def serialize_doc(doc):
     if not doc: return None
@@ -32,197 +29,179 @@ def serialize_doc(doc):
     return doc
 
 # ==============================================================================
-# 2. FRONTEND TEMPLATES (TAILWIND + GLASSMORPHISM + NEON)
+# 2. CLIENT FRONTEND TEMPLATE (DYNAMIC TABLES, CODES, COMMENTS, REVIEWS)
 # ==============================================================================
-
 CUSTOMER_HTML = """
 <!DOCTYPE html>
 <html lang="uk" class="dark">
 <head>
-    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Nexus Premium Cafe</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Premium Cafe System</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socketio/4.7.2/socketio.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;900&display=swap" rel="stylesheet">
     <style>
-        body { font-family: 'Outfit', sans-serif; background-color: #050505; color: #f3f4f6; -webkit-tap-highlight-color: transparent; }
-        .glass-panel { background: rgba(20, 20, 25, 0.75); backdrop-filter: blur(16px); border: 1px solid rgba(255,255,255,0.05); }
-        .neon-accent { text-shadow: 0 0 20px rgba(139, 92, 246, 0.5); }
-        .gradient-text { background: linear-gradient(135deg, #a78bfa 0%, #3b82f6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        body { font-family: 'Outfit', sans-serif; background-color: #06060c; color: #f3f4f6; }
+        .glass { background: rgba(18, 18, 29, 0.75); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.06); }
+        .gradient-text { background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
         .hide-scroll::-webkit-scrollbar { display: none; }
-        .btn-press:active { transform: scale(0.96); }
-        .processing-bg { background: linear-gradient(270deg, #4f46e5, #7c3aed, #2563eb); background-size: 600% 600%; animation: processing 2s ease infinite; }
-        @keyframes processing { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
+        .btn-active:active { transform: scale(0.95); }
     </style>
 </head>
-<body class="pb-36 relative overflow-x-hidden">
+<body class="pb-32 min-h-screen relative overflow-x-hidden">
 
-    <div class="fixed top-[-10%] left-[-10%] w-96 h-96 bg-indigo-600/20 rounded-full blur-[100px] pointer-events-none z-0"></div>
-    <div class="fixed bottom-[-10%] right-[-10%] w-96 h-96 bg-purple-600/20 rounded-full blur-[100px] pointer-events-none z-0"></div>
+    <div class="fixed top-[-20%] left-[-10%] w-[500px] h-[500px] bg-purple-600/10 rounded-full blur-[120px] pointer-events-none"></div>
+    <div class="fixed bottom-[-20%] right-[-10%] w-[500px] h-[500px] bg-blue-600/10 rounded-full blur-[120px] pointer-events-none"></div>
 
-    <header class="glass-panel sticky top-0 z-40 px-5 py-4 border-b border-white/5">
-        <div class="max-w-7xl mx-auto flex justify-between items-center relative z-10">
+    <header class="glass sticky top-0 z-40 px-6 py-4 border-b border-white/5">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
             <div class="flex items-center gap-3">
-                <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center shadow-[0_0_20px_rgba(99,102,241,0.4)]">
-                    <i class="fas fa-hexagon-nodes text-2xl text-white"></i>
+                <div class="w-11 h-11 bg-gradient-to-tr from-purple-600 to-blue-500 rounded-xl flex items-center justify-center shadow-lg shadow-purple-500/20">
+                    <i class="fas fa-layer-group text-white text-xl"></i>
                 </div>
                 <div>
-                    <h1 class="text-2xl font-black tracking-tight gradient-text uppercase">Nexus</h1>
-                    <div class="flex items-center gap-2">
-                        <span class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
-                        <p class="text-xs text-gray-400 font-semibold tracking-widest uppercase">System Online</p>
-                    </div>
+                    <h1 class="text-xl font-black tracking-wider uppercase gradient-text">NEXUS CAFE</h1>
+                    <p class="text-[10px] text-emerald-400 font-bold uppercase tracking-widest flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping"></span> Стіл #{{ table_id }}
+                    </p>
                 </div>
             </div>
-            
-            <div class="hidden sm:flex items-center gap-2 bg-white/5 border border-white/10 px-4 py-2 rounded-xl">
-                <i class="fas fa-star text-amber-400"></i>
-                <div class="text-xs font-bold text-gray-300">
-                    <span class="block text-gray-500 uppercase text-[9px] tracking-wider">Level 1</span>
-                    <span id="loyalty-points">0</span> XP
-                </div>
+            <div class="flex gap-2">
+                <button onclick="openModal('reviews-modal')" class="btn-active px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs font-bold transition flex items-center gap-2 border border-white/5">
+                    <i class="fas fa-star text-amber-400"></i> Відгук
+                </button>
+                <button onclick="openModal('orders-modal')" class="btn-active px-4 py-2 bg-white/5 hover:bg-white/10 rounded-xl text-xs font-bold transition flex items-center gap-2 border border-white/5">
+                    <i class="fas fa-receipt text-blue-400"></i> Мої чеки
+                </button>
             </div>
         </div>
     </header>
 
-    <main class="max-w-7xl mx-auto px-5 pt-8 relative z-10">
-        
-        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4">
-            <h2 class="text-3xl font-black flex items-center gap-3">
-                Меню <span class="text-indigo-500">.</span>
-            </h2>
-            <div class="flex gap-2 w-full sm:w-auto">
-                <button onclick="openMyOrders()" class="flex-1 sm:flex-none btn-press px-5 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl font-bold text-sm transition flex items-center justify-center gap-2">
-                    <i class="fas fa-history text-indigo-400"></i> Замовлення
-                </button>
-                <button onclick="callWaiter()" class="flex-1 sm:flex-none btn-press px-5 py-3 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/20 rounded-xl font-bold text-sm text-amber-400 transition flex items-center justify-center gap-2">
-                    <i class="fas fa-bell"></i> Офіціант
-                </button>
-            </div>
-        </div>
-
-        <div id="category-bar" class="flex gap-3 overflow-x-auto hide-scroll pb-4 mb-6 sticky top-24 z-30 bg-[#050505]/90 backdrop-blur-md -mx-5 px-5"></div>
-
-        <div id="menu-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5"></div>
+    <main class="max-w-7xl mx-auto px-6 pt-8">
+        <div id="categories" class="flex gap-3 overflow-x-auto hide-scroll pb-4 mb-6"></div>
+        <div id="menu-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6"></div>
     </main>
 
-    <div id="smart-cart" class="fixed bottom-0 left-0 right-0 p-5 z-40 transform translate-y-full transition-transform duration-500 ease-out pointer-events-none">
-        <div class="max-w-3xl mx-auto glass-panel rounded-3xl p-2 pl-6 flex items-center justify-between border border-indigo-500/30 shadow-[0_10px_40px_rgba(0,0,0,0.8)] pointer-events-auto">
-            <div class="flex items-center gap-4">
-                <div class="relative">
-                    <i class="fas fa-bag-shopping text-2xl text-indigo-400"></i>
-                    <span id="cart-badge" class="absolute -top-2 -right-2 bg-rose-500 text-white text-xs font-black w-5 h-5 flex items-center justify-center rounded-full shadow-lg">0</span>
-                </div>
-                <div>
-                    <p class="text-xs text-gray-400 font-bold uppercase tracking-wider">Сума до сплати</p>
-                    <p class="text-2xl font-black text-white"><span id="cart-total-amount">0</span> ₴</p>
-                </div>
+    <div id="cart-bar" class="fixed bottom-0 left-0 right-0 p-5 z-40 transform translate-y-full transition-transform duration-500 pointer-events-none">
+        <div class="max-w-3xl mx-auto glass rounded-2xl p-3 pl-6 flex items-center justify-between border border-purple-500/30 shadow-2xl pointer-events-auto">
+            <div>
+                <p class="text-xs text-gray-400 font-bold uppercase tracking-wider">Ваше замовлення</p>
+                <p class="text-2xl font-black text-white"><span id="cart-total">0</span> ₴</p>
             </div>
-            <button onclick="startCheckout()" class="btn-press bg-indigo-600 text-white px-8 py-4 rounded-2xl font-black text-sm uppercase tracking-wider shadow-[0_0_20px_rgba(79,70,229,0.4)] flex items-center gap-2">
-                Оформити <i class="fas fa-arrow-right"></i>
+            <button onclick="openCheckout()" class="btn-active bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white px-8 py-4 rounded-xl font-black text-sm uppercase tracking-wider shadow-lg shadow-purple-500/20 flex items-center gap-2 transition">
+                Перейти до кошика <i class="fas fa-shopping-basket"></i>
             </button>
         </div>
     </div>
 
-    <div id="checkout-modal" class="fixed inset-0 bg-black/90 backdrop-blur-xl z-50 hidden flex-col items-center justify-end sm:justify-center p-0 sm:p-4 opacity-0 transition-opacity duration-300">
-        <div class="w-full max-w-lg glass-panel rounded-t-[2rem] sm:rounded-3xl p-6 relative flex flex-col max-h-[90vh] transform translate-y-full sm:translate-y-0 transition-transform duration-300" id="checkout-content">
-            <button onclick="closeCheckout()" class="absolute top-6 right-6 w-10 h-10 bg-white/5 rounded-full flex items-center justify-center text-gray-400 hover:text-white hover:bg-white/10 transition"><i class="fas fa-times text-xl"></i></button>
+    <div id="checkout-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 hidden items-center justify-center p-4">
+        <div class="w-full max-w-xl glass rounded-2xl p-6 relative flex flex-col max-h-[90vh]">
+            <button onclick="closeModal('checkout-modal')" class="absolute top-4 right-4 text-gray-400 hover:text-white"><i class="fas fa-times text-xl"></i></button>
+            <h3 class="text-2xl font-black mb-4 flex items-center gap-2"><i class="fas fa-shopping-cart text-purple-500"></i> Ваш кошик</h3>
             
-            <h3 class="text-2xl font-black mb-6">Оформлення</h3>
+            <div id="checkout-list" class="flex-1 overflow-y-auto hide-scroll space-y-3 pr-1 mb-4"></div>
             
-            <div id="checkout-items" class="flex-1 overflow-y-auto hide-scroll space-y-3 mb-6"></div>
-            
-            <div class="space-y-4 mb-6">
-                <div class="bg-white/5 border border-white/10 p-4 rounded-2xl flex items-center gap-4">
-                    <div class="w-12 h-12 bg-indigo-500/20 rounded-xl flex items-center justify-center text-indigo-400"><i class="fas fa-location-dot text-xl"></i></div>
-                    <div class="flex-1">
-                        <label class="text-xs text-gray-400 font-bold uppercase block mb-1">Номер вашого столу</label>
-                        <select id="table-number" class="w-full bg-transparent text-white font-black text-lg focus:outline-none appearance-none">
-                            <option value="1" class="bg-gray-900">Стіл #01</option>
-                            <option value="2" class="bg-gray-900">Стіл #02 (VIP)</option>
-                            <option value="3" class="bg-gray-900">Стіл #03</option>
-                            <option value="4" class="bg-gray-900">Стіл #04</option>
-                        </select>
+            <div class="space-y-4 border-t border-white/5 pt-4">
+                <label class="flex items-center gap-3 bg-white/5 p-4 rounded-xl border border-white/5 cursor-pointer">
+                    <input type="checkbox" id="order-takeaway" class="w-5 h-5 rounded accent-purple-600">
+                    <div>
+                        <p class="font-bold text-sm text-white">Замовлення з собою</p>
+                        <p class="text-xs text-gray-400">Упакувати в крафтовий пакет</p>
                     </div>
-                    <i class="fas fa-chevron-down text-gray-600"></i>
-                </div>
-            </div>
-
-            <div class="border-t border-white/10 pt-6 flex justify-between items-end mb-6">
+                </label>
+                
                 <div>
-                    <p class="text-xs text-gray-400 font-bold uppercase mb-1">Отримуєте XP балів</p>
-                    <p class="text-amber-400 font-black flex items-center gap-1"><i class="fas fa-bolt"></i> +<span id="checkout-xp">0</span></p>
-                </div>
-                <div class="text-right">
-                    <p class="text-xs text-gray-400 font-bold uppercase mb-1">До сплати</p>
-                    <p class="text-3xl font-black text-white"><span id="checkout-final-total">0</span> ₴</p>
+                    <label class="text-xs text-gray-400 font-bold uppercase tracking-wider block mb-1">Коментар до кухні</label>
+                    <textarea id="order-comment" rows="2" placeholder="Наприклад: без цибулі, зробити гарячішим..." class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 transition"></textarea>
                 </div>
             </div>
 
-            <button id="pay-btn" onclick="processOrder()" class="w-full processing-bg text-white font-black text-lg py-5 rounded-2xl shadow-[0_0_30px_rgba(79,70,229,0.4)] transition-all flex items-center justify-center gap-3">
-                <i class="fab fa-apple text-2xl"></i> Pay
-            </button>
+            <div class="flex justify-between items-center mt-6 pt-4 border-t border-white/5">
+                <div>
+                    <p class="text-xs text-gray-400 font-bold uppercase">Разом до сплати</p>
+                    <p class="text-3xl font-black text-white"><span id="checkout-total">0</span> ₴</p>
+                </div>
+                <button onclick="submitOrder()" class="btn-active bg-emerald-600 hover:bg-emerald-500 text-white font-black px-8 py-4 rounded-xl uppercase text-sm tracking-wider shadow-lg shadow-emerald-500/20 transition">
+                    Підтвердити замовлення
+                </button>
+            </div>
         </div>
     </div>
 
-    <div id="orders-modal" class="fixed inset-0 bg-black/90 backdrop-blur-xl z-50 hidden flex-col items-center justify-center p-4 opacity-0 transition-opacity">
-        <div class="w-full max-w-2xl glass-panel rounded-3xl p-6 sm:p-8 relative max-h-[85vh] flex flex-col">
-            <button onclick="closeMyOrders()" class="absolute top-6 right-6 text-gray-400 hover:text-white"><i class="fas fa-times text-2xl"></i></button>
-            <h3 class="text-2xl font-black mb-6 flex items-center gap-3"><i class="fas fa-radar text-indigo-500"></i> Ваші радари</h3>
+    <div id="orders-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 hidden items-center justify-center p-4">
+        <div class="w-full max-w-xl glass rounded-2xl p-6 relative flex flex-col max-h-[85vh]">
+            <button onclick="closeModal('orders-modal')" class="absolute top-4 right-4 text-gray-400 hover:text-white"><i class="fas fa-times text-xl"></i></button>
+            <h3 class="text-xl font-black mb-4 flex items-center gap-2"><i class="fas fa-clock text-blue-500"></i> Статус ваших замовлень</h3>
+            <div id="my-orders-list" class="flex-1 overflow-y-auto hide-scroll space-y-4"></div>
+        </div>
+    </div>
+
+    <div id="reviews-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 hidden items-center justify-center p-4">
+        <div class="w-full max-w-md glass rounded-2xl p-6 relative">
+            <button onclick="closeModal('reviews-modal')" class="absolute top-4 right-4 text-gray-400 hover:text-white"><i class="fas fa-times text-xl"></i></button>
+            <h3 class="text-xl font-black mb-2 flex items-center gap-2"><i class="fas fa-comment-heart text-amber-500"></i> Залишити відгук</h3>
+            <p class="text-xs text-gray-400 mb-4">Ваша думка допомагає нам ставати кращими!</p>
             
-            <div id="orders-list" class="flex-1 overflow-y-auto hide-scroll space-y-4"></div>
+            <div class="flex justify-center gap-3 mb-4 text-2xl" id="stars-container">
+                <i class="far fa-star cursor-pointer text-amber-400 transition" onclick="setRating(1)"></i>
+                <i class="far fa-star cursor-pointer text-amber-400 transition" onclick="setRating(2)"></i>
+                <i class="far fa-star cursor-pointer text-amber-400 transition" onclick="setRating(3)"></i>
+                <i class="far fa-star cursor-pointer text-amber-400 transition" onclick="setRating(4)"></i>
+                <i class="far fa-star cursor-pointer text-amber-400 transition" onclick="setRating(5)"></i>
+            </div>
+            
+            <textarea id="review-comment" rows="3" placeholder="Напишіть ваші враження..." class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white mb-4 focus:outline-none focus:border-amber-500 transition"></textarea>
+            <button onclick="submitReview()" class="w-full py-3 bg-amber-500 hover:bg-amber-400 text-gray-900 font-black rounded-xl text-sm uppercase tracking-wider transition">Надіслати відгук</button>
         </div>
     </div>
 
-    <div id="toast-root" class="fixed top-6 left-1/2 transform -translate-x-1/2 z-[100] flex flex-col gap-2 w-full max-w-sm px-4 pointer-events-none"></div>
+    <div id="toast-container" class="fixed top-4 left-1/2 transform -translate-x-1/2 z-[100] flex flex-col gap-2 w-full max-w-sm px-4 pointer-events-none"></div>
 
     <script>
-        // 1. Управління UUID клієнта
-        let clientUUID = localStorage.getItem('nexus_uuid');
+        const tableId = "{{ table_id }}";
+        let clientUUID = localStorage.getItem('nexus_client_uuid');
         if (!clientUUID) {
-            clientUUID = crypto.randomUUID ? crypto.randomUUID() : 'user-' + Date.now();
-            localStorage.setItem('nexus_uuid', clientUUID);
+            clientUUID = 'u-' + Math.random().toString(36).substr(2, 9) + '-' + Date.now();
+            localStorage.setItem('nexus_client_uuid', clientUUID);
         }
 
         const socket = io({ auth: { uuid: clientUUID } });
-        let menuData = [];
-        let cart = JSON.parse(localStorage.getItem('nexus_cart_' + clientUUID)) || {};
+        let menuItems = [];
+        let cart = {};
         let activeCategory = 'all';
+        let currentRating = 0;
 
-        // 2. Ініціалізація Socket
         socket.on('connect', () => {
-            socket.emit('client_init', { uuid: clientUUID, table: localStorage.getItem('nexus_table') || '1' });
-            updateCartUI();
+            socket.emit('client_init', { uuid: clientUUID, table: tableId });
         });
 
         socket.on('menu_sync', (data) => {
-            menuData = data;
+            menuItems = data;
             renderCategories();
             renderMenu();
-            updateCartUI();
+            updateCartState();
         });
 
         socket.on('order_status_update', (data) => {
-            showToast(`Ваше замовлення тепер: ${data.status}`, 'success');
-            if(!document.getElementById('orders-modal').classList.contains('hidden')) {
+            showToast(`Статус вашого замовлення змінено на: ${data.status}`, 'info');
+            if (!document.getElementById('orders-modal').classList.contains('hidden')) {
                 loadMyOrders();
             }
         });
 
-        // 3. UI Рендерінг
+        socket.on('notification', (data) => {
+            showToast(data.message, data.type || 'info');
+        });
+
         function renderCategories() {
-            const bar = document.getElementById('category-bar');
-            const cats = ['all', ...new Set(menuData.map(i => i.category))];
-            
-            bar.innerHTML = cats.map(cat => {
-                const label = cat === 'all' ? 'Всі позиції' : cat;
-                const isActive = cat === activeCategory;
-                const baseStyle = "px-6 py-3 rounded-2xl font-bold text-sm whitespace-nowrap transition-all border";
-                const activeStyle = isActive 
-                    ? "bg-indigo-600 border-indigo-500 text-white shadow-[0_0_15px_rgba(79,70,229,0.4)]" 
-                    : "bg-white/5 border-white/10 text-gray-400 hover:bg-white/10 hover:text-white";
-                return `<button onclick="setCategory('${cat}')" class="btn-press ${baseStyle} ${activeStyle}">${label}</button>`;
+            const container = document.getElementById('categories');
+            const cats = ['all', ...new Set(menuItems.map(i => i.category))];
+            container.innerHTML = cats.map(cat => {
+                const label = cat === 'all' ? 'Все меню' : cat;
+                const active = cat === activeCategory;
+                return `<button onclick="setCategory('${cat}')" class="btn-active px-5 py-2.5 rounded-xl text-xs font-bold border transition whitespace-nowrap ${active ? 'bg-purple-600 border-purple-500 text-white shadow-lg shadow-purple-500/20' : 'bg-white/5 border-white/5 text-gray-400 hover:text-white' }">${label}</button>`;
             }).join('');
         }
 
@@ -234,329 +213,353 @@ CUSTOMER_HTML = """
 
         function renderMenu() {
             const grid = document.getElementById('menu-grid');
-            const items = activeCategory === 'all' ? menuData : menuData.filter(i => i.category === activeCategory);
+            const filtered = activeCategory === 'all' ? menuItems : menuItems.filter(i => i.category === activeCategory);
             
-            grid.innerHTML = items.map(item => {
-                const qty = cart[item._id] || 0;
+            grid.innerHTML = filtered.map(item => {
+                const count = cart[item._id] || 0;
+                const outOfStock = item.available === false;
+                
                 return `
-                <div class="glass-panel rounded-3xl p-2 flex flex-col relative group overflow-hidden border border-white/5 hover:border-indigo-500/30 transition-all">
-                    <div class="p-5 flex-1">
-                        <div class="flex justify-between items-start mb-3">
-                            <div class="w-10 h-10 bg-gray-900 rounded-xl flex items-center justify-center text-indigo-400 border border-gray-800"><i class="fas fa-utensils text-sm"></i></div>
-                            <span class="bg-white/5 text-gray-400 text-[10px] font-bold uppercase px-3 py-1 rounded-full border border-white/10">${item.category}</span>
-                        </div>
-                        <h3 class="text-lg font-bold text-white mb-1 group-hover:text-indigo-400 transition">${item.name}</h3>
-                        <p class="text-xs text-gray-500 line-clamp-2">${item.description}</p>
+                <div class="glass rounded-2xl overflow-hidden flex flex-col border relative ${outOfStock ? 'opacity-40 border-white/5' : 'border-white/5 hover:border-purple-500/20 transition-all'}">
+                    <div class="h-44 bg-gray-900 flex items-center justify-center relative overflow-hidden">
+                        ${item.image ? `<img src="${item.image}" class="w-full h-full object-cover">` : `<i class="fas fa-utensils text-4xl text-white/10"></i>`}
+                        ${outOfStock ? `<div class="absolute inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center"><span class="bg-rose-600 text-white font-black text-xs px-3 py-1.5 rounded-lg uppercase tracking-wider">Немає в наявності</span></div>` : ''}
                     </div>
-                    
-                    <div class="p-4 bg-black/40 rounded-2xl flex items-center justify-between border border-white/5 mt-auto">
-                        <div class="font-black text-xl text-white">${item.price} <span class="text-sm text-indigo-500">₴</span></div>
-                        
-                        <div class="flex items-center gap-3">
-                            ${qty > 0 ? `
-                                <button onclick="modCart('${item._id}', -1)" class="w-8 h-8 rounded-xl bg-gray-800 text-white font-bold flex items-center justify-center hover:bg-gray-700 transition">-</button>
-                                <span class="font-black w-4 text-center">${qty}</span>
-                            ` : ''}
-                            <button onclick="modCart('${item._id}', 1)" class="h-10 px-4 rounded-xl bg-indigo-600 text-white font-bold text-sm flex items-center gap-2 hover:bg-indigo-500 transition shadow-lg btn-press">
-                                <i class="fas fa-plus"></i> ${qty > 0 ? '' : 'Додати'}
-                            </button>
+                    <div class="p-5 flex-1 flex flex-col justify-between">
+                        <div>
+                            <h3 class="font-bold text-lg text-white mb-1">${item.name}</h3>
+                            <p class="text-xs text-gray-400 line-clamp-2 mb-4">${item.description || 'Немає опису.'}</p>
+                        </div>
+                        <div class="flex items-center justify-between pt-2 border-t border-white/5">
+                            <span class="text-xl font-black text-white">${item.price} ₴</span>
+                            ${outOfStock ? '' : `
+                                <div class="flex items-center gap-2">
+                                    ${count > 0 ? `
+                                        <button onclick="changeQty('${item._id}', -1)" class="w-8 h-8 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center hover:bg-white/10 text-white font-bold transition">-</button>
+                                        <span class="font-black text-sm w-4 text-center text-white">${count}</span>
+                                    ` : ''}
+                                    <button onclick="changeQty('${item._id}', 1)" class="btn-active h-8 px-4 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs flex items-center gap-1.5 shadow-md shadow-purple-500/10 transition">
+                                        <i class="fas fa-plus"></i> ${count > 0 ? '' : 'Додати'}
+                                    </button>
+                                </div>
+                            `}
                         </div>
                     </div>
                 </div>`;
             }).join('');
         }
 
-        // 4. Логіка кошика
-        function modCart(id, delta) {
+        function changeQty(id, delta) {
+            const item = menuItems.find(i => i._id === id);
+            if (item && item.available === false && delta > 0) return;
+            
             cart[id] = (cart[id] || 0) + delta;
             if (cart[id] <= 0) delete cart[id];
-            localStorage.setItem('nexus_cart_' + clientUUID, JSON.stringify(cart));
-            updateCartUI();
+            updateCartState();
             renderMenu();
+            if(!document.getElementById('checkout-modal').classList.contains('hidden')) {
+                renderCheckoutList();
+            }
         }
 
-        function updateCartUI() {
-            const bar = document.getElementById('smart-cart');
+        function updateCartState() {
             let total = 0, count = 0;
-            
             Object.keys(cart).forEach(id => {
-                const item = menuData.find(i => i._id === id);
-                if (item) { total += item.price * cart[id]; count += cart[id]; }
+                const item = menuItems.find(i => i._id === id);
+                if (item) {
+                    if (item.available === false) {
+                        delete cart[id];
+                    } else {
+                        total += item.price * cart[id];
+                        count += cart[id];
+                    }
+                }
             });
 
-            document.getElementById('cart-badge').innerText = count;
-            document.getElementById('cart-total-amount').innerText = total;
-
-            if (count > 0) {
-                bar.classList.remove('translate-y-full');
-            } else {
-                bar.classList.add('translate-y-full');
-                closeCheckout();
-            }
+            document.getElementById('cart-total').innerText = total;
+            document.getElementById('checkout-total').innerText = total;
             
-            // Оновлення XP
-            const xp = parseInt(localStorage.getItem('nexus_xp_' + clientUUID) || '0');
-            document.getElementById('loyalty-points').innerText = xp;
+            const bar = document.getElementById('cart-bar');
+            if (count > 0) bar.classList.remove('translate-y-full');
+            else { bar.classList.add('translate-y-full'); closeModal('checkout-modal'); }
         }
 
-        // 5. Оформлення та процесинг
-        function startCheckout() {
-            const m = document.getElementById('checkout-modal');
-            const c = document.getElementById('checkout-content');
-            const list = document.getElementById('checkout-items');
-            
-            let total = 0;
-            list.innerHTML = Object.keys(cart).map(id => {
-                const item = menuData.find(i => i._id === id);
-                if(!item) return '';
-                total += item.price * cart[id];
-                return `
-                <div class="flex justify-between items-center bg-white/5 p-4 rounded-2xl border border-white/10">
-                    <div><p class="font-bold text-sm">${item.name}</p><p class="text-xs text-indigo-400 font-bold">${item.price} ₴ <span class="text-gray-500 font-normal">x ${cart[id]}</span></p></div>
-                    <div class="font-black text-white">${item.price * cart[id]} ₴</div>
+        function openCheckout() {
+            openModal('checkout-modal');
+            renderCheckoutList();
+        }
+
+        function renderCheckoutList() {
+            const list = document.getElementById('checkout-list');
+            let html = '';
+            Object.keys(cart).forEach(id => {
+                const item = menuItems.find(i => i._id === id);
+                if (!item) return;
+                html += `
+                <div class="flex items-center justify-between bg-white/5 p-4 rounded-xl border border-white/5">
+                    <div class="flex-1 pr-2">
+                        <p class="font-bold text-sm text-white">${item.name}</p>
+                        <p class="text-xs text-purple-400 font-bold">${item.price} ₴</p>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <button onclick="changeQty('${item._id}', -1)" class="w-7 h-7 bg-white/5 hover:bg-white/10 rounded-md flex items-center justify-center font-bold border border-white/10">-</button>
+                        <span class="font-black text-sm text-white w-4 text-center">${cart[id]}</span>
+                        <button onclick="changeQty('${item._id}', 1)" class="w-7 h-7 bg-white/5 hover:bg-white/10 rounded-md flex items-center justify-center font-bold border border-white/10">+</button>
+                        <span class="font-black text-sm text-white pl-2 min-w-[50px] text-right">${item.price * cart[id]} ₴</span>
+                    </div>
                 </div>`;
-            }).join('');
-            
-            document.getElementById('checkout-final-total').innerText = total;
-            document.getElementById('checkout-xp').innerText = Math.floor(total * 0.1); // 10% кэшбек XP
-            
-            m.classList.remove('hidden');
-            setTimeout(() => { m.classList.remove('opacity-0'); c.classList.remove('translate-y-full'); }, 10);
+            });
+            list.innerHTML = html;
         }
 
-        function closeCheckout() {
-            const m = document.getElementById('checkout-modal');
-            const c = document.getElementById('checkout-content');
-            m.classList.add('opacity-0'); c.classList.add('translate-y-full');
-            setTimeout(() => m.classList.add('hidden'), 300);
-        }
+        function submitOrder() {
+            const items = Object.keys(cart).map(id => {
+                const item = menuItems.find(i => i._id === id);
+                return { id, name: item.name, price: item.price, qty: cart[id] };
+            });
 
-        function processOrder() {
-            const btn = document.getElementById('pay-btn');
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin text-2xl"></i> Обробка банку...';
-            btn.classList.add('opacity-80', 'pointer-events-none');
+            const payload = {
+                uuid: clientUUID,
+                table: tableId,
+                items: items,
+                takeaway: document.getElementById('order-takeaway').checked,
+                comment: document.getElementById('order-comment').value
+            };
 
-            setTimeout(() => {
-                const items = Object.keys(cart).map(id => {
-                    const item = menuData.find(i => i._id === id);
-                    return { id: id, name: item.name, price: item.price, qty: cart[id] };
-                });
-                
-                const table = document.getElementById('table-number').value;
-                localStorage.setItem('nexus_table', table);
-
-                socket.emit('create_order', { uuid: clientUUID, table: table, items: items }, (res) => {
-                    if (res.success) {
-                        // Додаємо XP
-                        let total = items.reduce((sum, i) => sum + (i.price * i.qty), 0);
-                        let currentXP = parseInt(localStorage.getItem('nexus_xp_' + clientUUID) || '0');
-                        localStorage.setItem('nexus_xp_' + clientUUID, currentXP + Math.floor(total * 0.1));
-                        
-                        cart = {};
-                        localStorage.removeItem('nexus_cart_' + clientUUID);
-                        updateCartUI();
-                        renderMenu();
-                        closeCheckout();
-                        showToast('Оплачено! Замовлення на кухні.', 'success');
-                        
-                        btn.innerHTML = '<i class="fab fa-apple text-2xl"></i> Pay';
-                        btn.classList.remove('opacity-80', 'pointer-events-none');
-                    }
-                });
-            }, 1500); // Імітація затримки процесингу
-        }
-
-        // 6. Історія замовлень
-        function openMyOrders() {
-            document.getElementById('orders-modal').classList.remove('hidden');
-            setTimeout(() => document.getElementById('orders-modal').classList.remove('opacity-0'), 10);
-            loadMyOrders();
-        }
-
-        function closeMyOrders() {
-            document.getElementById('orders-modal').classList.add('opacity-0');
-            setTimeout(() => document.getElementById('orders-modal').classList.add('hidden'), 300);
+            socket.emit('create_order', payload, (res) => {
+                if (res.success) {
+                    showToast('Замовлення надіслано на кухню!', 'success');
+                    cart = {};
+                    document.getElementById('order-comment').value = '';
+                    document.getElementById('order-takeaway').checked = false;
+                    updateCartState();
+                    renderMenu();
+                    closeModal('checkout-modal');
+                }
+            });
         }
 
         function loadMyOrders() {
-            const container = document.getElementById('orders-list');
-            container.innerHTML = '<div class="text-center py-10"><i class="fas fa-circle-notch fa-spin text-3xl text-indigo-500"></i></div>';
-            
             socket.emit('get_client_orders', { uuid: clientUUID }, (orders) => {
-                if (orders.length === 0) {
-                    container.innerHTML = '<div class="text-center py-10 text-gray-500"><i class="fas fa-ghost text-4xl mb-4 block opacity-50"></i>Історія чиста</div>';
+                const container = document.getElementById('my-orders-list');
+                if(!orders.length) {
+                    container.innerHTML = `<p class="text-center text-sm text-gray-500 py-6">У вас немає активних замовлень</p>`;
                     return;
                 }
-
                 container.innerHTML = orders.map(o => {
-                    let stClass = o.status === 'Нове' ? 'text-blue-400 bg-blue-500/10 border-blue-500/30' : 
-                                 (o.status === 'Готується' ? 'text-amber-400 bg-amber-500/10 border-amber-500/30' : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30');
+                    let badgeColor = o.status === 'Нове' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : (o.status === 'Готується' ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20');
                     return `
-                    <div class="bg-white/5 border border-white/10 rounded-2xl p-5 flex flex-col gap-3">
+                    <div class="bg-white/5 border border-white/5 p-4 rounded-xl space-y-2">
                         <div class="flex justify-between items-center">
-                            <div class="text-xs font-bold text-gray-500">${o.time} • Стіл ${o.table}</div>
-                            <div class="px-3 py-1 rounded-lg border text-xs font-black uppercase tracking-wider ${stClass}">${o.status}</div>
+                            <span class="text-xs text-gray-400 font-bold">${o.time} ${o.takeaway ? '• З собою' : ''}</span>
+                            <span class="px-2.5 py-1 text-[10px] font-black border uppercase tracking-wider rounded-md ${badgeColor}">${o.status}</span>
                         </div>
-                        <div class="text-sm text-gray-300">
-                            ${o.items.map(i => `${i.name} <span class="text-gray-500">x${i.qty}</span>`).join(', ')}
-                        </div>
-                        <div class="font-black text-xl text-white mt-2">${o.total} ₴</div>
+                        <p class="text-sm text-gray-200">${o.items.map(i => `${i.name} (x${i.qty})`).join(', ')}</p>
+                        ${o.comment ? `<p class="text-xs text-purple-400/80 bg-purple-500/5 p-2 rounded-lg border border-purple-500/10">Коментар: ${o.comment}</p>` : ''}
+                        <p class="text-lg font-black text-white pt-1">Всього: ${o.total} ₴</p>
                     </div>`;
                 }).join('');
             });
         }
 
-        function callWaiter() {
-            const table = localStorage.getItem('nexus_table') || '1';
-            socket.emit('call_waiter', { uuid: clientUUID, table: table });
-            showToast('Офіціант вже прямує до столу #' + table, 'info');
+        function setRating(val) {
+            currentRating = val;
+            const stars = document.getElementById('stars-container').children;
+            for(let i=0; i<5; i++) {
+                if(i < val) { stars[i].className = "fas fa-star cursor-pointer text-amber-400 transition"; }
+                else { stars[i].className = "far fa-star cursor-pointer text-amber-400 transition"; }
+            }
+        }
+
+        function submitReview() {
+            if(currentRating === 0) { showToast('Будь ласка, оберіть кількість зірок!', 'error'); return; }
+            const comment = document.getElementById('review-comment').value;
+            
+            socket.emit('submit_review', { table: tableId, rating: currentRating, comment }, (res) => {
+                if(res.success) {
+                    showToast('Дякуємо за ваш відгук!', 'success');
+                    setRating(0);
+                    document.getElementById('review-comment').value = '';
+                    closeModal('reviews-modal');
+                }
+            });
+        }
+
+        function openModal(id) {
+            document.getElementById(id).classList.remove('hidden');
+            document.getElementById(id).classList.add('flex');
+            if(id === 'orders-modal') loadMyOrders();
+        }
+        function closeModal(id) {
+            document.getElementById(id).classList.remove('flex');
+            document.getElementById(id).classList.add('hidden');
         }
 
         function showToast(msg, type) {
-            const root = document.getElementById('toast-root');
+            const root = document.getElementById('toast-container');
             const el = document.createElement('div');
-            const color = type === 'success' ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10' : 'border-indigo-500/30 text-indigo-400 bg-indigo-500/10';
-            const icon = type === 'success' ? 'fa-check' : 'fa-info-circle';
-            
-            el.className = `glass-panel ${color} px-5 py-3 rounded-xl flex items-center gap-3 shadow-2xl transform -translate-y-10 opacity-0 transition-all duration-300 border backdrop-blur-xl pointer-events-auto`;
-            el.innerHTML = `<i class="fas ${icon}"></i> <span class="text-sm font-bold">${msg}</span>`;
-            
+            let colors = type === 'success' ? 'border-emerald-500/30 text-emerald-400 bg-emerald-500/10' : (type === 'error' ? 'border-rose-500/30 text-rose-400 bg-rose-500/10' : 'border-blue-500/30 text-blue-400 bg-blue-500/10');
+            el.className = `glass ${colors} border px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2 text-sm font-bold pointer-events-auto transition duration-300`;
+            el.innerHTML = `<i class="fas ${type === 'success' ? 'fa-check-circle': 'fa-info-circle'}"></i> <span>${msg}</span>`;
             root.appendChild(el);
-            requestAnimationFrame(() => { el.classList.remove('-translate-y-10', 'opacity-0'); });
-            
-            setTimeout(() => {
-                el.classList.add('-translate-y-10', 'opacity-0');
-                setTimeout(() => el.remove(), 300);
-            }, 3000);
+            setTimeout(() => { el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, 3500);
         }
     </script>
 </body>
 </html>
 """
 
+# ==============================================================================
+# 3. KDS & ADMINISTRATION FRONTEND TEMPLATE (STOCK CONTROL, ACTIONS, REVIEWS PURGE)
+# ==============================================================================
 ADMIN_HTML = """
 <!DOCTYPE html>
 <html lang="uk" class="dark">
 <head>
-    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nexus KDS & Admin</title>
+    <meta charset="UTF-8">
+    <title>Nexus Panel | KDS, Склад & Відгуки</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socketio/4.7.2/socketio.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        body { background-color: #030305; color: #fff; font-family: system-ui, -apple-system, sans-serif; overflow: hidden; }
-        .kanban-col { background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.05); border-radius: 1.5rem; display: flex; flex-direction: column; }
-        .glass-card { background: rgba(30, 30, 35, 0.8); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); border-radius: 1rem; }
+        body { background-color: #040408; color: #fff; font-family: system-ui, sans-serif; }
+        .glass-card { background: rgba(22, 22, 33, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.05); }
         .hide-scroll::-webkit-scrollbar { display: none; }
     </style>
 </head>
-<body class="h-screen flex flex-col">
+<body class="h-screen flex flex-col overflow-hidden">
 
-    <header class="bg-[#0a0a0f] border-b border-white/10 p-4 flex justify-between items-center z-10 shadow-xl">
-        <div class="flex items-center gap-4">
-            <div class="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center text-xl shadow-[0_0_15px_rgba(79,70,229,0.5)]"><i class="fas fa-server"></i></div>
+    <header class="bg-[#0b0b12] border-b border-white/10 p-4 flex justify-between items-center shadow-2xl">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-purple-600 rounded-xl flex items-center justify-center text-white text-lg shadow-lg shadow-purple-500/30"><i class="fas fa-tools"></i></div>
             <div>
-                <h1 class="font-black text-lg uppercase tracking-widest text-indigo-400">Kitchen Display</h1>
-                <p class="text-[10px] text-gray-500 uppercase font-bold tracking-widest" id="conn-status">Connected</p>
+                <h1 class="font-black tracking-wider text-sm text-purple-400 uppercase">Nexus Premium Admin Console</h1>
+                <p class="text-[10px] text-emerald-400 font-bold uppercase tracking-wider" id="admin-status">Синхронізація активна</p>
             </div>
         </div>
-        
-        <div class="flex items-center gap-4">
-            <div id="waiter-alerts" class="flex gap-2"></div>
-            <a href="/logout" class="px-4 py-2 bg-rose-500/10 text-rose-500 border border-rose-500/20 rounded-lg text-sm font-bold hover:bg-rose-500/20 transition"><i class="fas fa-power-off"></i></a>
+        <div class="flex items-center gap-3">
+            <button onclick="switchTab('kds')" class="px-4 py-2 rounded-lg font-bold text-xs bg-purple-600 text-white shadow" id="tab-btn-kds">KDS Кухня</button>
+            <button onclick="switchTab('menu')" class="px-4 py-2 rounded-lg font-bold text-xs bg-white/5 hover:bg-white/10 text-gray-300 transition" id="tab-btn-menu">Керування Меню & Склад</button>
+            <button onclick="switchTab('reviews')" class="px-4 py-2 rounded-lg font-bold text-xs bg-white/5 hover:bg-white/10 text-gray-300 transition" id="tab-btn-reviews">Книга відгуків</button>
+            <a href="/logout" class="px-3 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 rounded-lg text-xs transition border border-rose-500/20"><i class="fas fa-sign-out-alt"></i></a>
         </div>
     </header>
 
-    <main class="flex-1 overflow-hidden p-6 grid grid-cols-3 gap-6">
+    <div id="section-kds" class="flex-1 grid grid-cols-3 gap-6 p-6 overflow-hidden">
+        <div class="flex flex-col h-full bg-white/[0.01] border border-white/5 rounded-2xl overflow-hidden">
+            <div class="p-4 bg-blue-500/10 border-b border-blue-500/20 text-sm font-black text-blue-400 flex justify-between items-center uppercase tracking-wider"><span>Нові замовлення</span><span id="count-new" class="bg-blue-500 text-white text-xs px-2 py-0.5 rounded-full">0</span></div>
+            <div id="col-new" class="flex-1 overflow-y-auto p-4 space-y-4 hide-scroll"></div>
+        </div>
+        <div class="flex flex-col h-full bg-white/[0.01] border border-white/5 rounded-2xl overflow-hidden">
+            <div class="p-4 bg-amber-500/10 border-b border-amber-500/20 text-sm font-black text-amber-400 flex justify-between items-center uppercase tracking-wider"><span>Готуються</span><span id="count-cook" class="bg-amber-500 text-gray-900 text-xs px-2 py-0.5 rounded-full font-bold">0</span></div>
+            <div id="col-cook" class="flex-1 overflow-y-auto p-4 space-y-4 hide-scroll"></div>
+        </div>
+        <div class="flex flex-col h-full bg-white/[0.01] border border-white/5 rounded-2xl overflow-hidden">
+            <div class="p-4 bg-emerald-500/10 border-b border-emerald-500/20 text-sm font-black text-emerald-400 flex justify-between items-center uppercase tracking-wider"><span>Готово до видачі</span><span id="count-done" class="bg-emerald-500 text-white text-xs px-2 py-0.5 rounded-full">0</span></div>
+            <div id="col-done" class="flex-1 overflow-y-auto p-4 space-y-4 hide-scroll"></div>
+        </div>
+    </div>
+
+    <div id="section-menu" class="flex-1 p-6 overflow-hidden hidden grid grid-cols-3 gap-6">
+        <div class="glass-card p-5 rounded-2xl flex flex-col space-y-4 overflow-y-auto hide-scroll">
+            <h3 class="font-black text-md text-purple-400 border-b border-white/10 pb-2 uppercase tracking-wider">Додати / Редагувати позицію</h3>
+            <input type="hidden" id="item-id">
+            <div>
+                <label class="text-[10px] uppercase font-bold text-gray-400 block mb-1">Назва страви</label>
+                <input type="text" id="item-name" class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-purple-500">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="text-[10px] uppercase font-bold text-gray-400 block mb-1">Ціна (₴)</label>
+                    <input type="number" id="item-price" class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-purple-500">
+                </div>
+                <div>
+                    <label class="text-[10px] uppercase font-bold text-gray-400 block mb-1">Категорія</label>
+                    <input type="text" id="item-category" placeholder="Кава, Бургери..." class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-purple-500">
+                </div>
+            </div>
+            <div>
+                <label class="text-[10px] uppercase font-bold text-gray-400 block mb-1">Опис позиції</label>
+                <textarea id="item-description" rows="2" class="w-full bg-white/5 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:border-purple-500"></textarea>
+            </div>
+            <div>
+                <label class="text-[10px] uppercase font-bold text-gray-400 block mb-1">Фото страви (Прямо в Базу)</label>
+                <input type="file" id="item-file" accept="image/*" class="w-full text-xs text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-purple-600 file:text-white hover:file:bg-purple-500 cursor-pointer">
+                <div id="image-preview-container" class="mt-2 hidden"><img id="image-preview" class="h-20 w-full object-cover rounded-xl border border-white/10"></div>
+            </div>
+            <div class="flex gap-2 pt-2">
+                <button onclick="clearItemForm()" class="flex-1 py-3 bg-white/5 hover:bg-white/10 rounded-xl font-bold text-xs border border-white/5 transition">Очистити</button>
+                <button onclick="saveMenuItem()" class="flex-1 py-3 bg-purple-600 hover:bg-purple-500 text-white font-bold rounded-xl text-xs transition shadow-md shadow-purple-500/20">Зберегти в базу</button>
+            </div>
+        </div>
         
-        <div class="kanban-col h-full overflow-hidden">
-            <div class="p-4 border-b border-white/10 bg-blue-500/5 rounded-t-3xl">
-                <h2 class="font-black text-blue-400 flex items-center gap-2 uppercase tracking-wider text-sm"><i class="fas fa-inbox"></i> Вхідні (Нові) <span class="bg-blue-500 text-white text-xs px-2 py-0.5 rounded-full ml-auto" id="count-new">0</span></h2>
-            </div>
-            <div class="flex-1 overflow-y-auto hide-scroll p-4 space-y-4" id="col-new"></div>
+        <div class="col-span-2 bg-white/[0.01] border border-white/5 rounded-2xl flex flex-col overflow-hidden">
+            <div class="p-4 bg-white/5 border-b border-white/10 font-bold text-sm tracking-wider uppercase">Усі позиції в базі даних ресторану</div>
+            <div id="warehouse-list" class="flex-1 overflow-y-auto p-4 space-y-3 hide-scroll"></div>
         </div>
+    </div>
 
-        <div class="kanban-col h-full overflow-hidden shadow-[0_0_30px_rgba(245,158,11,0.05)] border-amber-500/20">
-            <div class="p-4 border-b border-amber-500/20 bg-amber-500/10 rounded-t-3xl">
-                <h2 class="font-black text-amber-400 flex items-center gap-2 uppercase tracking-wider text-sm"><i class="fas fa-fire animate-pulse"></i> В роботі <span class="bg-amber-500 text-gray-900 text-xs px-2 py-0.5 rounded-full ml-auto font-bold" id="count-cook">0</span></h2>
-            </div>
-            <div class="flex-1 overflow-y-auto hide-scroll p-4 space-y-4" id="col-cook"></div>
+    <div id="section-reviews" class="flex-1 p-6 overflow-hidden hidden flex-col">
+        <div class="bg-white/[0.01] border border-white/5 rounded-2xl flex flex-col h-full overflow-hidden">
+            <div class="p-4 bg-amber-500/5 border-b border-white/10 font-black text-sm text-amber-400 uppercase tracking-wider">Відгуки клієнтів в реальному часі</div>
+            <div id="admin-reviews-list" class="flex-1 overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 hide-scroll"></div>
         </div>
-
-        <div class="kanban-col h-full overflow-hidden">
-            <div class="p-4 border-b border-white/10 bg-emerald-500/5 rounded-t-3xl">
-                <h2 class="font-black text-emerald-400 flex items-center gap-2 uppercase tracking-wider text-sm"><i class="fas fa-check-double"></i> Готово (Видача) <span class="bg-emerald-500 text-white text-xs px-2 py-0.5 rounded-full ml-auto" id="count-done">0</span></h2>
-            </div>
-            <div class="flex-1 overflow-y-auto hide-scroll p-4 space-y-4" id="col-done"></div>
-        </div>
-
-    </main>
-
-    <audio id="sound-new" src="https://assets.mixkit.co/active_storage/sfx/2869/2869-preview.mp3" preload="auto"></audio>
-    <audio id="sound-bell" src="https://assets.mixkit.co/active_storage/sfx/995/995-preview.mp3" preload="auto"></audio>
+    </div>
 
     <script>
         const socket = io();
-        let currentOrders = [];
+        let activeOrders = [];
+        let base64ImageStr = "";
 
-        socket.on('connect', () => { socket.emit('admin_init'); document.getElementById('conn-status').innerText = 'Online'; document.getElementById('conn-status').className = "text-[10px] text-emerald-500 uppercase font-bold tracking-widest"; });
-        socket.on('disconnect', () => { document.getElementById('conn-status').innerText = 'Offline'; document.getElementById('conn-status').className = "text-[10px] text-rose-500 uppercase font-bold tracking-widest"; });
+        socket.on('connect', () => {
+            socket.emit('admin_init');
+        });
 
         socket.on('kds_sync', (orders) => {
-            currentOrders = orders;
-            renderKanban();
+            activeOrders = orders;
+            renderKDS();
         });
 
-        socket.on('new_order_alert', (order) => {
-            try { document.getElementById('sound-new').play(); } catch(e){}
-            currentOrders.unshift(order);
-            renderKanban();
+        socket.on('warehouse_sync', (menu) => {
+            renderWarehouse(menu);
         });
 
-        socket.on('waiter_alert', (data) => {
-            try { document.getElementById('sound-bell').play(); } catch(e){}
-            const root = document.getElementById('waiter-alerts');
-            const el = document.createElement('div');
-            el.className = "bg-amber-500 text-gray-900 font-black text-xs px-4 py-2 rounded-lg flex items-center gap-2 cursor-pointer hover:bg-amber-400 animate-pulse";
-            el.innerHTML = `<i class="fas fa-bell"></i> Стіл ${data.table}`;
-            el.onclick = () => el.remove();
-            root.appendChild(el);
+        socket.on('reviews_sync', (reviews) => {
+            renderReviews(reviews);
         });
 
-        function renderKanban() {
+        // 1. KDS Engine
+        function renderKDS() {
             const cols = { 'Нове': document.getElementById('col-new'), 'Готується': document.getElementById('col-cook'), 'Готово': document.getElementById('col-done') };
             Object.values(cols).forEach(c => c.innerHTML = '');
-            
             let counts = { 'Нове': 0, 'Готується': 0, 'Готово': 0 };
 
-            currentOrders.forEach(o => {
-                if(o.status === 'Закрито') return;
+            activeOrders.forEach(o => {
+                if (o.status === 'Закрито') return;
                 counts[o.status]++;
                 
-                const itemsHtml = o.items.map(i => `
-                    <div class="flex justify-between text-sm py-1.5 border-b border-white/5 last:border-0 text-gray-300">
-                        <span>${i.name}</span> <span class="font-black text-white bg-white/10 px-2 rounded">x${i.qty}</span>
-                    </div>`).join('');
-                
-                let btnHtml = '';
-                if(o.status === 'Нове') btnHtml = `<button onclick="updateStatus('${o._id}', 'Готується')" class="w-full mt-3 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-sm transition shadow-lg">Готувати <i class="fas fa-arrow-right"></i></button>`;
-                if(o.status === 'Готується') btnHtml = `<button onclick="updateStatus('${o._id}', 'Готово')" class="w-full mt-3 py-2 bg-amber-500 hover:bg-amber-400 text-gray-900 font-black rounded-xl text-sm transition shadow-[0_0_15px_rgba(245,158,11,0.4)]">На видачу <i class="fas fa-check"></i></button>`;
-                if(o.status === 'Готово') btnHtml = `<button onclick="updateStatus('${o._id}', 'Закрито')" class="w-full mt-3 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-sm transition shadow-lg">Закрити чек <i class="fas fa-times"></i></button>`;
+                let actionBtn = '';
+                if(o.status === 'Нове') actionBtn = `<button onclick="changeStatus('${o._id}', 'Готується')" class="w-full mt-4 py-2.5 bg-blue-600 hover:bg-blue-500 rounded-xl font-bold text-xs text-white transition">Почати готувати <i class="fas fa-fire ml-1"></i></button>`;
+                if(o.status === 'Готується') actionBtn = `<button onclick="changeStatus('${o._id}', 'Готово')" class="w-full mt-4 py-2.5 bg-amber-500 hover:bg-amber-400 rounded-xl font-black text-xs text-gray-900 transition shadow-lg shadow-amber-500/20">Готово на видачу <i class="fas fa-check ml-1"></i></button>`;
+                if(o.status === 'Готово') actionBtn = `<button onclick="changeStatus('${o._id}', 'Закрито')" class="w-full mt-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 rounded-xl font-bold text-xs text-white transition">Закрити чек <i class="fas fa-times ml-1"></i></button>`;
 
                 const card = `
-                <div class="glass-card p-4">
+                <div class="glass-card p-4 rounded-xl relative border border-white/5">
                     <div class="flex justify-between items-center mb-3">
-                        <div class="text-2xl font-black text-white">#${o.table}</div>
-                        <div class="text-xs text-gray-400 font-bold bg-black/40 px-2 py-1 rounded-md">${o.time}</div>
+                        <span class="text-2xl font-black text-white">Стіл #${o.table}</span>
+                        <span class="text-xs text-gray-400 font-bold bg-black/40 px-2 py-1 rounded">${o.time}</span>
                     </div>
-                    <div class="bg-black/20 rounded-xl p-3 mb-2 border border-white/5">${itemsHtml}</div>
-                    <div class="flex justify-between items-center mt-3 pt-3 border-t border-white/10">
-                        <span class="text-xs text-gray-500 font-bold uppercase tracking-wider">Сума</span>
-                        <span class="font-black text-lg text-indigo-400">${o.total} ₴</span>
+                    ${o.takeaway ? `<div class="mb-2"><span class="bg-rose-500/20 text-rose-400 font-black text-[9px] uppercase tracking-widest px-2 py-0.5 rounded border border-rose-500/30">З собою</span></div>` : ''}
+                    <div class="bg-black/30 rounded-xl p-3 border border-white/5 space-y-1">
+                        ${o.items.map(i => `<div class="flex justify-between text-xs text-gray-300"><span>${i.name}</span><span class="font-bold text-white bg-white/10 px-1.5 py-0.2 rounded">x${i.qty}</span></div>`).join('')}
                     </div>
-                    ${btnHtml}
+                    ${o.comment ? `<div class="mt-2 text-xs text-purple-400 bg-purple-500/5 p-2 rounded border border-purple-500/10">Коментар: ${o.comment}</div>` : ''}
+                    <div class="flex justify-between items-center mt-3 pt-3 border-t border-white/5">
+                        <span class="text-xs text-gray-500 uppercase font-bold">Всього</span>
+                        <span class="font-black text-md text-purple-400">${o.total} ₴</span>
+                    </div>
+                    ${actionBtn}
                 </div>`;
-                
                 cols[o.status].innerHTML += card;
             });
 
@@ -565,8 +568,130 @@ ADMIN_HTML = """
             document.getElementById('count-done').innerText = counts['Готово'];
         }
 
-        function updateStatus(id, newStatus) {
+        function changeStatus(id, newStatus) {
             socket.emit('admin_update_order', { id, status: newStatus });
+        }
+
+        // 2. Warehouse Engine & Base64 Converter
+        document.getElementById('item-file').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if(file) {
+                const reader = new FileReader();
+                reader.onload = function(evt) {
+                    base64ImageStr = evt.target.result;
+                    document.getElementById('image-preview').src = base64ImageStr;
+                    document.getElementById('image-preview-container').classList.remove('hidden');
+                };
+                reader.readAsDataURL(file);
+            }
+        });
+
+        function saveMenuItem() {
+            const payload = {
+                id: document.getElementById('item-id').value,
+                name: document.getElementById('item-name').value,
+                price: parseFloat(document.getElementById('item-price').value),
+                category: document.getElementById('item-category').value,
+                description: document.getElementById('item-description').value,
+                image: base64ImageStr
+            };
+            if(!payload.name || !payload.price || !payload.category) { alert('Заповніть обовʼязкові поля!'); return; }
+            socket.emit('admin_save_menu_item', payload);
+            clearItemForm();
+        }
+
+        function renderWarehouse(menu) {
+            const container = document.getElementById('warehouse-list');
+            container.innerHTML = menu.map(i => `
+            <div class="glass-card p-4 rounded-xl flex items-center justify-between border border-white/5">
+                <div class="flex items-center gap-4">
+                    <div class="w-14 h-14 bg-gray-900 rounded-lg overflow-hidden flex items-center justify-center border border-white/10 flex-shrink-0">
+                        ${i.image ? `<img src="${i.image}" class="w-full h-full object-cover">` : `<i class="fas fa-utensils text-gray-600"></i>`}
+                    </div>
+                    <div>
+                        <h4 class="font-bold text-sm text-white">${i.name} <span class="text-xs font-normal text-gray-500">(${i.category})</span></h4>
+                        <p class="text-xs text-purple-400 font-bold">${i.price} ₴</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button onclick="toggleStock('${i._id}')" class="px-3 py-2 rounded-lg font-bold text-xs border transition ${i.available !== false ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 hover:bg-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20 hover:bg-rose-500/20'}">
+                        ${i.available !== false ? '<i class="fas fa-check-circle mr-1"></i> На складі' : '<i class="fas fa-times-circle mr-1"></i> Немає'}
+                    </button>
+                    <button onclick="editItem(${JSON.stringify(i).replace(/"/g, '&quot;')})" class="p-2 bg-white/5 hover:bg-white/10 rounded-lg text-gray-300 border border-white/5"><i class="fas fa-edit"></i></button>
+                    <button onclick="deleteItem('${i._id}')" class="p-2 bg-rose-500/10 hover:bg-rose-500/20 rounded-lg text-rose-500 border border-rose-500/20"><i class="fas fa-trash-alt"></i></button>
+                </div>
+            </div>`).join('');
+        }
+
+        function toggleStock(id) { socket.emit('admin_toggle_stock', { id }); }
+        function deleteItem(id) { if(confirm('Видалити страву з бази назавжди?')) socket.emit('admin_delete_item', { id }); }
+
+        function editItem(i) {
+            document.getElementById('item-id').value = i._id;
+            document.getElementById('item-name').value = i.name;
+            document.getElementById('item-price').value = i.price;
+            document.getElementById('item-category').value = i.category;
+            document.getElementById('item-description').value = i.description || '';
+            base64ImageStr = i.image || '';
+            if(i.image) {
+                document.getElementById('image-preview').src = i.image;
+                document.getElementById('image-preview-container').classList.remove('hidden');
+            } else {
+                document.getElementById('image-preview-container').class-list.add('hidden');
+            }
+        }
+
+        function clearItemForm() {
+            document.getElementById('item-id').value = '';
+            document.getElementById('item-name').value = '';
+            document.getElementById('item-price').value = '';
+            document.getElementById('item-category').value = '';
+            document.getElementById('item-description').value = '';
+            document.getElementById('item-file').value = '';
+            base64ImageStr = "";
+            document.getElementById('image-preview-container').classList.add('hidden');
+        }
+
+        // 3. Reviews Engine
+        function renderReviews(reviews) {
+            const container = document.getElementById('admin-reviews-list');
+            if(!reviews.length) { container.innerHTML = `<p class="col-span-full text-center text-sm text-gray-500">Книга відгуків порожня</p>`; return; }
+            
+            container.innerHTML = reviews.map(r => {
+                let stars = '';
+                for(let i=1; i<=5; i++) stars += `<i class="${i <= r.rating ? 'fas' : 'far'} fa-star text-amber-400 text-xs"></i>`;
+                return `
+                <div class="glass-card p-4 rounded-xl relative border border-white/5 flex flex-col justify-between">
+                    <div>
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="font-black text-sm text-purple-400">Стіл #${r.table}</span>
+                            <span class="text-[10px] text-gray-500">${r.time}</span>
+                        </div>
+                        <div class="mb-2 flex gap-0.5">${stars}</div>
+                        <p class="text-xs text-gray-200 italic">"${r.comment || 'Без текстового коментаря'}"</p>
+                    </div>
+                    <div class="mt-4 pt-3 border-t border-white/5 flex justify-end">
+                        <button onclick="purgeReview('${r._id}')" class="px-2.5 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/20 text-rose-500 text-[10px] font-bold rounded-lg transition uppercase tracking-wider">Видалити</button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function purgeReview(id) { if(confirm('Видалити цей відгук із книги?')) socket.emit('admin_delete_review', { id }); }
+
+        // 4. Tab System Switching
+        function switchTab(tab) {
+            document.getElementById('section-kds').classList.add('hidden');
+            document.getElementById('section-menu').classList.add('hidden');
+            document.getElementById('section-reviews').classList.add('hidden');
+            document.getElementById('section-' + tab).classList.remove('hidden');
+            if(tab === 'reviews') document.getElementById('section-reviews').classList.add('flex');
+
+            ['kds', 'menu', 'reviews'].forEach(t => {
+                const btn = document.getElementById('tab-btn-' + t);
+                if(t === tab) { btn.className = "px-4 py-2 rounded-lg font-bold text-xs bg-purple-600 text-white shadow"; }
+                else { btn.className = "px-4 py-2 rounded-lg font-bold text-xs bg-white/5 hover:bg-white/10 text-gray-300 transition"; }
+            });
         }
     </script>
 </body>
@@ -574,56 +699,72 @@ ADMIN_HTML = """
 """
 
 # ==============================================================================
-# 3. ROUTES & CORE LOGIC
+# 4. FLASK ROUTING ARCHITECTURE (TABLE ROUTING, ADMIN AUTH)
 # ==============================================================================
 @app.route('/')
-def index():
-    return render_template_string(CUSTOMER_HTML)
+def global_index():
+    # Fallback на перший столик, якщо зайшли без роуту стола
+    return redirect('/1')
+
+@app.route('/<table_id>')
+def customer_index(table_id):
+    # Динамічний роут під будь-який столик (/1, /2, /vip)
+    return render_template_string(CUSTOMER_HTML, table_id=table_id)
 
 @app.route('/admin', methods=['GET', 'POST'])
-def admin():
+def admin_portal():
     if request.method == 'POST':
         if request.form.get('password') == ADMIN_PASSWORD:
-            session['admin_logged_in'] = True
-            return redirect(url_for('admin'))
-    if session.get('admin_logged_in'):
+            session['admin_logged'] = True
+            return redirect(url_for('admin_portal'))
+    if session.get('admin_logged'):
         return render_template_string(ADMIN_HTML)
     return """
-    <form method="POST" style="background:#000; height:100vh; display:flex; align-items:center; justify-content:center;">
-        <input type="password" name="password" placeholder="Admin Key" style="padding:15px; font-size:20px; border-radius:10px; border:1px solid #333; background:#111; color:#fff; text-align:center;">
+    <form method="POST" style="background:#040408; height:100vh; display:flex; align-items:center; justify-content:center; margin:0; font-family:sans-serif;">
+        <div style="background:#11111e; padding:30px; border-radius:20px; border:1px solid #222; text-align:center; box-shadow:0 10px 30px rgba(0,0,0,0.5);">
+            <h2 style="color:#8b5cf6; margin-bottom:20px; text-transform:uppercase; letter-spacing:2px; font-size:18px;">Nexus Authentication</h2>
+            <input type="password" name="password" placeholder="Введіть код доступу" style="padding:12px 20px; font-size:16px; border-radius:10px; border:1px solid #333; background:#07070c; color:#fff; text-align:center; outline:none; focus:border-purple-500; width:200px;">
+        </div>
     </form>
     """
 
 @app.route('/logout')
-def logout():
-    session.pop('admin_logged_in', None)
-    return redirect(url_for('index'))
+def admin_logout():
+    session.pop('admin_logged', None)
+    return redirect(url_for('global_index'))
 
 # ==============================================================================
-# 4. SOCKET.IO - REALTIME UUID ARCHITECTURE
+# 5. SOCKET.IO CONTROLLERS (PIPELINE PROCESSORS)
 # ==============================================================================
 @socketio.on('client_init')
 def handle_client_init(data):
-    # UUID authorization approach for robust connection handling
     client_id = data.get('uuid')
     if client_id:
-        join_room(client_id) # Private room for specific client UUID
-        
+        join_room(client_id)
+    # Віддаємо тільки страви актуального меню
     menu = [serialize_doc(i) for i in db.menu.find()]
     emit('menu_sync', menu)
 
 @socketio.on('create_order')
-def create_order(data):
+def handle_create_order(data):
     client_id = data.get('uuid')
     items = data.get('items', [])
-    total = sum(i['price'] * i['qty'] for i in items)
     
+    # Перераховуємо суму на бекенді для безпеки
+    total = 0
+    for i in items:
+        db_item = db.menu.find_one({"_id": ObjectId(i['id'])})
+        if db_item:
+            total += db_item['price'] * i['qty']
+
     order = {
         'uuid': client_id,
         'table': data.get('table', '1'),
         'items': items,
         'total': total,
         'status': 'Нове',
+        'takeaway': data.get('takeaway', False),
+        'comment': data.get('comment', '').strip(),
         'time': datetime.now().strftime('%H:%M'),
         'timestamp': datetime.now()
     }
@@ -632,47 +773,111 @@ def create_order(data):
     order['_id'] = str(res.inserted_id)
     order.pop('timestamp', None)
     
-    # Broadcast to Kitchen Display System (Admins)
-    socketio.emit('new_order_alert', order, room='admins')
+    # Миттєво оновлюємо дошку KDS у адмінів
+    socketio.emit('kds_sync', [serialize_doc(o) for o in db.orders.find({"status": {"$ne": "Закрито"}}).sort("timestamp", -1)], room='admins')
     return {'success': True}
 
 @socketio.on('get_client_orders')
-def get_client_orders(data):
+def handle_get_client_orders(data):
     client_id = data.get('uuid')
-    orders = [serialize_doc(o) for o in db.orders.find({"uuid": client_id}).sort("timestamp", -1)]
-    return orders
+    return [serialize_doc(o) for o in db.orders.find({"uuid": client_id}).sort("timestamp", -1)]
 
-@socketio.on('call_waiter')
-def call_waiter(data):
-    socketio.emit('waiter_alert', {'table': data.get('table')}, room='admins')
+@socketio.on('submit_review')
+def handle_submit_review(data):
+    review = {
+        'table': data.get('table', '1'),
+        'rating': int(data.get('rating', 5)),
+        'comment': data.get('comment', '').strip(),
+        'time': datetime.now().strftime('%d.%m %H:%M'),
+        'timestamp': datetime.now()
+    }
+    db.reviews.insert_one(review)
+    # Синхронізуємо відгуки у адміна
+    socketio.emit('reviews_sync', [serialize_doc(r) for r in db.reviews.find().sort("timestamp", -1)], room='admins')
+    return {'success': True}
 
-# --- ADMIN SOCKETS ---
+# --- BACKEND ADMIN EMITTERS ---
 @socketio.on('admin_init')
-def admin_init():
-    if session.get('admin_logged_in'):
+def handle_admin_init():
+    if session.get('admin_logged'):
         join_room('admins')
-        orders = [serialize_doc(o) for o in db.orders.find({"status": {"$ne": "Закрито"}}).sort("timestamp", -1)]
-        emit('kds_sync', orders)
+        emit('kds_sync', [serialize_doc(o) for o in db.orders.find({"status": {"$ne": "Закрито"}}).sort("timestamp", -1)])
+        emit('warehouse_sync', [serialize_doc(i) for i in db.menu.find()])
+        emit('reviews_sync', [serialize_doc(r) for r in db.reviews.find().sort("timestamp", -1)])
 
 @socketio.on('admin_update_order')
-def admin_update_order(data):
-    if session.get('admin_logged_in'):
-        db.orders.update_one({"_id": ObjectId(data['id'])}, {"$set": {"status": data['status']}})
+def handle_admin_update_order(data):
+    if session.get('admin_logged'):
+        o_id = data.get('id')
+        new_status = data.get('status')
         
-        # Notify specific UUID client that their order changed
-        updated = db.orders.find_one({"_id": ObjectId(data['id'])})
-        if updated and updated.get('uuid'):
-            socketio.emit('order_status_update', {'status': data['status']}, room=updated['uuid'])
+        db.orders.update_one({"_id": ObjectId(o_id)}, {"$set": {"status": new_status}})
+        
+        # Надсилаємо таргетоване сповіщення клієнту про готовність/зміну
+        order = db.orders.find_one({"_id": ObjectId(o_id)})
+        if order and order.get('uuid'):
+            socketio.emit('order_status_update', {'status': new_status}, room=order['uuid'])
             
-        # Refresh KDS for all admins
-        orders = [serialize_doc(o) for o in db.orders.find({"status": {"$ne": "Закрито"}}).sort("timestamp", -1)]
-        socketio.emit('kds_sync', orders, room='admins')
+        # Оновлюємо KDS
+        socketio.emit('kds_sync', [serialize_doc(o) for o in db.orders.find({"status": {"$ne": "Закрито"}}).sort("timestamp", -1)], room='admins')
+
+@socketio.on('admin_toggle_stock')
+def handle_admin_toggle_stock(data):
+    if session.get('admin_logged'):
+        item = db.menu.find_one({"_id": ObjectId(data['id'])})
+        if item:
+            new_state = False if item.get('available') !== False else True
+            db.menu.update_one({"_id": ObjectId(data['id'])}, {"$set": {"available": new_state}})
+            
+            # Сповіщаємо КЛІЄНТІВ, щоб у них миттєво зникла/з'явилася кнопка "Додати"
+            updated_menu = [serialize_doc(i) for i in db.menu.find()]
+            socketio.emit('menu_sync', updated_menu)
+            socketio.emit('warehouse_sync', updated_menu, room='admins')
+
+@socketio.on('admin_save_menu_item')
+def handle_admin_save_menu_item(data):
+    if session.get('admin_logged'):
+        item_id = data.get('id')
+        item_data = {
+            'name': data['name'],
+            'price': data['price'],
+            'category': data['category'],
+            'description': data['description']
+        }
+        # Оновлюємо картинку тільки якщо була завантажена нова
+        if data.get('image'):
+            item_data['image'] = data['image']
+
+        if item_id:
+            db.menu.update_one({"_id": ObjectId(item_id)}, {"$set": item_data})
+        else:
+            item_data['available'] = True
+            db.menu.insert_one(item_data)
+            
+        updated_menu = [serialize_doc(i) for i in db.menu.find()]
+        socketio.emit('menu_sync', updated_menu)
+        socketio.emit('warehouse_sync', updated_menu, room='admins')
+
+@socketio.on('admin_delete_item')
+def handle_admin_delete_item(data):
+    if session.get('admin_logged'):
+        db.menu.delete_one({"_id": ObjectId(data['id'])})
+        updated_menu = [serialize_doc(i) for i in db.menu.find()]
+        socketio.emit('menu_sync', updated_menu)
+        socketio.emit('warehouse_sync', updated_menu, room='admins')
+
+@socketio.on('admin_delete_review')
+def handle_admin_delete_review(data):
+    if session.get('admin_logged'):
+        db.reviews.delete_one({"_id": ObjectId(data['id'])})
+        socketio.emit('reviews_sync', [serialize_doc(r) for r in db.reviews.find().sort("timestamp", -1)], room='admins')
 
 if __name__ == '__main__':
+    # Генерація демо-страд, якщо база чиста
     if db.menu.count_documents({}) == 0:
         db.menu.insert_many([
-            {"name": "Cyber Cappuccino", "category": "Кава", "price": 85, "description": "Подвійний еспресо з хмарною пінкою"},
-            {"name": "Neon Burger", "category": "Бургери", "price": 250, "description": "Чорна булочка, подвійна яловича котлета, чеддер"},
-            {"name": "Glitch Fries", "category": "Снеки", "price": 95, "description": "Картопля фрі з трюфельним соусом та пармезаном"}
+            {"name": "Cyber Cappuccino", "category": "Кава", "price": 85, "description": "Подвійний еспресо, збите ультрапастеризоване молоко", "available": true},
+            {"name": "Neon Burger", "category": "Бургери", "price": 260, "description": "Мраморна яловичина, соус дорблю, карамелізована цибуля", "available": true},
+            {"name": "Glitch Fries", "category": "Снеки", "price": 95, "description": "Хрустка картопля фрі з пармезаном та трюфельним маслом", "available": true}
         ])
     socketio.run(app, host='0.0.0.0', port=10000)
