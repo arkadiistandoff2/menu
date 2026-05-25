@@ -19,7 +19,7 @@ MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/cafe_db')
 ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'admin123')
 
 client = MongoClient(MONGO_URI)
-db = client.get_default_database()
+db = client.get_default_database(default='cafe_db')
 
 # Словник для моніторингу активних гостей в реальному часі
 live_sessions = {}
