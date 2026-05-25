@@ -826,14 +826,14 @@ def handle_admin_toggle_stock(data):
     if session.get('admin_logged'):
         item = db.menu.find_one({"_id": ObjectId(data['id'])})
         if item:
-            new_state = False if item.get('available') !== False else True
+            # Виправлено !== на пітонівський !=
+            new_state = False if item.get('available') != False else True
             db.menu.update_one({"_id": ObjectId(data['id'])}, {"$set": {"available": new_state}})
             
             # Сповіщаємо КЛІЄНТІВ, щоб у них миттєво зникла/з'явилася кнопка "Додати"
             updated_menu = [serialize_doc(i) for i in db.menu.find()]
             socketio.emit('menu_sync', updated_menu)
             socketio.emit('warehouse_sync', updated_menu, room='admins')
-
 @socketio.on('admin_save_menu_item')
 def handle_admin_save_menu_item(data):
     if session.get('admin_logged'):
