@@ -804,9 +804,19 @@ ADMIN_HTML = """
                     <textarea id="menu-description" rows="2" class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-200 focus:outline-none focus:border-indigo-500 resize-none"></textarea>
                 </div>
                 <div>
-                    <label class="block text-zinc-500 mb-1">Посилання на фото URL</label>
-                    <input type="text" id="menu-image" placeholder="https://..." class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
-                </div>
+    <label class="block text-zinc-500 mb-1">Фото страви (Перетягни файл або встав URL)</label>
+    
+    <div id="drop-zone" class="w-full h-24 border-2 border-dashed border-zinc-800 rounded-xl flex flex-col items-center justify-center p-2 text-center bg-zinc-900/50 hover:border-indigo-500 transition-all cursor-pointer relative group">
+        <div class="space-y-1 group-hover:scale-95 transition-transform pointer-events-none">
+            <i class="fas fa-cloud-upload-alt text-lg text-zinc-500 group-hover:text-indigo-400"></i>
+            <p class="text-[11px] text-zinc-400"><span class="text-indigo-400 font-bold">Клікни для вибору</span> або перетягни фото</p>
+            <p id="file-name-indicator" class="text-[10px] text-zinc-600 truncate max-w-[250px]">Файл не обрано</p>
+        </div>
+        <input type="file" id="menu-file-input" accept="image/*" class="absolute inset-0 opacity-0 cursor-pointer">
+    </div>
+
+    <input type="text" id="menu-image" placeholder="Або встав посилання на фото (https://...)" class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2 mt-2 text-[11px] text-zinc-300 focus:outline-none focus:border-indigo-500">
+</div>
                 <div class="flex gap-2 pt-2">
                     <button type="button" onclick="resetMenuForm()" class="flex-1 bg-zinc-900 border border-zinc-800 py-2.5 rounded-xl text-zinc-400 font-bold">Очистити</button>
                     <button type="submit" class="flex-1 bg-indigo-600 hover:bg-indigo-500 py-2.5 rounded-xl text-white font-bold">Зберегти</button>
