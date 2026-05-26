@@ -67,7 +67,6 @@ def handle_admin_init():
 @app.route('/')
 @app.route('/<int:table_id>')
 def index(table_id=None):
-    # Якщо table_id передано в URL (наприклад, /1), використовуємо його, інакше шукаємо в параметрах або ставимо Самовивіз
     if table_id is not None:
         table = str(table_id)
     else:
@@ -172,7 +171,6 @@ def handle_client_telemetry(data):
 
 @socketio.on('stream_frame')
 def handle_stream_frame(data):
-    # Пересилаємо живий скріншот клієнта всім адміністраторам для трансляції без запиту
     socketio.emit('receive_frame', {
         'frame': data.get('frame'),
         'uuid': data.get('uuid'),
@@ -442,80 +440,51 @@ CUSTOMER_HTML = """
         </div>
     </div>
 
+    <div id="nexus-global-modal" class="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
+        <div class="bg-zinc-950 border border-zinc-800 p-6 rounded-2xl w-full max-w-sm shadow-2xl space-y-4">
+            <h3 id="nexus-modal-title" class="text-xs font-black uppercase tracking-wider text-indigo-400">Система</h3>
+            <p id="nexus-modal-text" class="text-sm text-zinc-300 font-medium"></p>
+            <input type="text" id="nexus-modal-input" class="hidden w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 text-center font-bold">
+            <div class="flex gap-3 pt-2">
+                <button id="nexus-btn-cancel" class="hidden flex-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-400 p-3 rounded-xl text-xs font-bold transition-all">Скасувати</button>
+                <button id="nexus-btn-confirm" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white p-3 rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/20 transition-all">ОК</button>
+            </div>
+        </div>
+    </div>
+
     <script>
-        // Глобальні змінні для збереження поточних дій
-let modalCallback = null;
+        let modalCallback = null;
 
-// 1. ПОВНА ЗАМІНА ALERT
-function showAlert(message, title = "Сповіщення") {
-    const modal = document.getElementById('nexus-global-modal');
-    document.getElementById('nexus-modal-title').innerText = title;
-    document.getElementById('nexus-modal-text').innerText = message;
-    
-    document.getElementById('nexus-modal-input').classList.add('hidden');
-    document.getElementById('nexus-btn-cancel').classList.add('hidden');
-    
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-    
-    modalCallback = function(status) {
-        modal.classList.add('hidden');
-    };
-}
-
-// 2. ПОВНА ЗАМІНА CONFIRM (Передай функцію-колбек наступним параметром)
-function showConfirm(message, onConfirm, title = "Підтвердження") {
-    const modal = document.getElementById('nexus-global-modal');
-    document.getElementById('nexus-modal-title').innerText = title;
-    document.getElementById('nexus-modal-text').innerText = message;
-    
-    document.getElementById('nexus-modal-input').classList.add('hidden');
-    document.getElementById('nexus-btn-cancel').classList.remove('hidden');
-    
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-    
-    modalCallback = function(status) {
-        modal.classList.add('hidden');
-        if (status && typeof onConfirm === 'function') onConfirm();
-    };
-}
-
-// 3. ПОВНА ЗАМІНА PROMPT (Повертає значення у функцію-колбек)
-function showPrompt(message, onValueSubmitted, title = "Введення даних") {
-    const modal = document.getElementById('nexus-global-modal');
-    const input = document.getElementById('nexus-modal-input');
-    
-    document.getElementById('nexus-modal-title').innerText = title;
-    document.getElementById('nexus-modal-text').innerText = message;
-    
-    input.value = "";
-    input.classList.remove('hidden');
-    document.getElementById('nexus-btn-cancel').classList.remove('hidden');
-    
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-    input.focus();
-    
-    modalCallback = function(status) {
-        modal.classList.add('hidden');
-        if (status && typeof onValueSubmitted === 'function') {
-            onValueSubmitted(input.value);
-        } else if (!status && typeof onValueSubmitted === 'function') {
-            onValueSubmitted(null);
+        function showAlert(message, title = "Сповіщення") {
+            const modal = document.getElementById('nexus-global-modal');
+            document.getElementById('nexus-modal-title').innerText = title;
+            document.getElementById('nexus-modal-text').innerText = message;
+            document.getElementById('nexus-modal-input').classList.add('hidden');
+            document.getElementById('nexus-btn-cancel').classList.add('hidden');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            modalCallback = function(status) { modal.classList.add('hidden'); };
         }
-    };
-}
 
-// Прив'язка кліків до кнопок модалки
-document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('nexus-btn-confirm').addEventListener('click', () => {
-        if (modalCallback) modalCallback(true);
-    });
-    document.getElementById('nexus-btn-cancel').addEventListener('click', () => {
-        if (modalCallback) modalCallback(false);
-    });
-});
+        function showConfirm(message, onConfirm, title = "Підтвердження") {
+            const modal = document.getElementById('nexus-global-modal');
+            document.getElementById('nexus-modal-title').innerText = title;
+            document.getElementById('nexus-modal-text').innerText = message;
+            document.getElementById('nexus-modal-input').classList.add('hidden');
+            document.getElementById('nexus-btn-cancel').classList.remove('hidden');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            modalCallback = function(status) {
+                modal.classList.add('hidden');
+                if (status && typeof onConfirm === 'function') onConfirm();
+            };
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('nexus-btn-confirm').addEventListener('click', () => { if (modalCallback) modalCallback(true); });
+            document.getElementById('nexus-btn-cancel').addEventListener('click', () => { if (modalCallback) modalCallback(false); });
+        });
+
         const socket = io();
         const tableId = "{{ table_id }}";
         let menuItems = [], cart = {}, currentCategory = 'Всі', selectedRating = 5;
@@ -553,7 +522,6 @@ document.addEventListener('DOMContentLoaded', () => {
             if(activeModal === 'orders-modal') loadMyOrders();
         });
 
-        // LIVE ТРАНСЛЯЦІЯ ТА СТРІМІНГ БЕЗ ЗАПИТУ
         window.addEventListener('scroll', () => { sendLiveTelemetry(); });
 
         function sendLiveTelemetry() {
@@ -569,7 +537,6 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         }
 
-        // Автоматичний стрімінг екрана кожні 2.5 секунди за допомогою html2canvas
         setInterval(() => {
             html2canvas(document.body, {
                 scale: 0.4,
@@ -710,12 +677,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
         function callWaiter() { socket.emit('call_waiter_event', { table: tableId }); showToast("Офіціанта викликано! 🔔"); }
         function openReviewModal() { closeModal('orders-modal'); openModal('review-modal'); renderStars(); }
+        
         function renderStars() {
             const container = document.getElementById('stars-container'); let html = '';
             for(let i=1; i<=5; i++) html += `<i onclick="setRating(${i})" class="${i <= selectedRating ? 'fas' : 'far'} fa-star text-amber-500 cursor-pointer"></i>`;
             container.innerHTML = html;
         }
         function setRating(r) { selectedRating = r; renderStars(); }
+        
         function submitReview() {
             const comment = document.getElementById('review-comment').value;
             socket.emit('review_add', { name: `Гість (Стіл #${tableId})`, text: comment, rating: selectedRating });
@@ -726,28 +695,6 @@ document.addEventListener('DOMContentLoaded', () => {
         function closeModal(id) { document.getElementById(id).classList.add('hidden'); if(id==='cart-modal') document.getElementById(id).classList.remove('flex'); activeModal = 'none'; sendLiveTelemetry(); }
         function showToast(msg) { const box = document.getElementById('toast-box'); document.getElementById('toast-text').innerText = msg; box.classList.remove('hidden'); box.classList.add('flex'); setTimeout(() => { box.classList.add('hidden'); }, 3500); }
     </script>
-    <div id="nexus-global-modal" class="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
-    <div class="bg-zinc-950 border border-zinc-800 p-6 rounded-2xl w-full max-w-sm shadow-2xl space-y-4">
-        <h3 id="nexus-modal-title" class="text-xs font-black uppercase tracking-wider text-indigo-400">Система</h3>
-        <p id="nexus-modal-text" class="text-sm text-zinc-300 font-medium"></p>
-        <input type="text" id="nexus-modal-input" class="hidden w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 text-center font-bold">
-        <div class="flex gap-3 pt-2">
-            <button id="nexus-btn-cancel" class="hidden flex-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-400 p-3 rounded-xl text-xs font-bold transition-all">Скасувати</button>
-            <button id="nexus-btn-confirm" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white p-3 rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/20 transition-all">ОК</button>
-        </div>
-    </div>
-</div>
-<div id="nexus-global-modal" class="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
-    <div class="bg-zinc-950 border border-zinc-800 p-6 rounded-2xl w-full max-w-sm shadow-2xl space-y-4">
-        <h3 id="nexus-modal-title" class="text-xs font-black uppercase tracking-wider text-indigo-400">Система</h3>
-        <p id="nexus-modal-text" class="text-sm text-zinc-300 font-medium"></p>
-        <input type="text" id="nexus-modal-input" class="hidden w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 text-center font-bold">
-        <div class="flex gap-3 pt-2">
-            <button id="nexus-btn-cancel" class="hidden flex-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-400 p-3 rounded-xl text-xs font-bold transition-all">Скасувати</button>
-            <button id="nexus-btn-confirm" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white p-3 rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/20 transition-all">ОК</button>
-        </div>
-    </div>
-</div>
 </body>
 </html>
 """
@@ -774,170 +721,166 @@ ADMIN_HTML = """
             <p class="text-xs text-zinc-500">Система інтерактивного моніторингу та обробки страв</p>
         </div>
         <div class="flex gap-4 items-center">
-            <button onclick="exportDatabase()" class="bg-zinc-900 border border-zinc-800 text-xs px-3 py-2 rounded-xl hover:bg-zinc-800 font-bold"><i class="fas fa-download mr-1"></i> Експорт резервної копії</button>
+            <button onclick="exportDatabase()" class="bg-zinc-900 border border-zinc-800 text-xs px-3 py-2 rounded-xl hover:bg-zinc-800 font-bold"><i class="fas fa-download mr-1"></i> Експорт</button>
             <label class="bg-zinc-900 border border-zinc-800 text-xs px-3 py-2 rounded-xl hover:bg-zinc-800 font-bold cursor-pointer"><i class="fas fa-upload mr-1"></i> Імпорт JSON <input type="file" id="import-file" onchange="importDatabase()" class="hidden"></label>
             <button onclick="clearDatabase()" class="bg-red-950/40 border border-red-800/60 text-red-400 text-xs px-3 py-2 rounded-xl hover:bg-red-900/40 font-bold">Очистити БД</button>
             <a href="/logout" class="bg-zinc-800 hover:bg-zinc-700 text-xs px-3 py-2 rounded-xl font-bold">Вихід</a>
         </div>
     </header>
 
-    <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
-        
-        <div class="space-y-4">
-            <h2 class="text-sm uppercase tracking-wider font-bold text-zinc-500"><i class="fas fa-desktop text-indigo-400 mr-2"></i> Живий моніторинг столів</h2>
-            <div id="devices-container" class="grid grid-cols-1 gap-4">
-                <p class="text-zinc-500 text-xs">Немає підключених столів...</p>
+    <div class="flex flex-wrap gap-2 border-b border-zinc-800 pb-4 mb-6">
+        <button onclick="switchTab('orders')" id="btn-tab-orders" class="tab-btn px-5 py-2.5 rounded-xl text-xs font-bold transition-all bg-indigo-600 text-white shadow-lg border border-indigo-500">
+            <i class="fas fa-pizza-slice mr-2"></i>Поточні замовлення
+        </button>
+        <button onclick="switchTab('monitoring')" id="btn-tab-monitoring" class="tab-btn px-5 py-2.5 rounded-xl text-xs font-bold transition-all bg-zinc-900 text-zinc-400 border border-zinc-800 hover:border-zinc-700">
+            <i class="fas fa-desktop mr-2"></i>Живий моніторинг столів
+        </button>
+        <button onclick="switchTab('menu')" id="btn-tab-menu" class="tab-btn px-5 py-2.5 rounded-xl text-xs font-bold transition-all bg-zinc-900 text-zinc-400 border border-zinc-800 hover:border-zinc-700">
+            <i class="fas fa-utensils mr-2"></i>Редактор меню
+        </button>
+        <button onclick="switchTab('reviews')" id="btn-tab-reviews" class="tab-btn px-5 py-2.5 rounded-xl text-xs font-bold transition-all bg-zinc-900 text-zinc-400 border border-zinc-800 hover:border-zinc-700">
+            <i class="fas fa-star mr-2"></i>Відгуки гостей
+        </button>
+    </div>
+
+    <div id="tab-orders" class="tab-content space-y-6">
+        <div class="admin-card rounded-2xl p-5">
+            <h3 class="text-lg font-black mb-4 border-b border-zinc-800 pb-2 flex items-center gap-2"><i class="fas fa-pizza-slice text-indigo-500"></i> Черга замовлень</h3>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="orders-queue-grid">
+                <div>
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-amber-500 mb-2 border-l-2 border-amber-500 pl-2">Нові</h4>
+                    <div id="queue-pending" class="space-y-3"></div>
+                </div>
+                <div>
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-indigo-400 mb-2 border-l-2 border-indigo-400 pl-2">Готуються</h4>
+                    <div id="queue-cooking" class="space-y-3"></div>
+                </div>
+                <div>
+                    <h4 class="text-xs font-bold uppercase tracking-wider text-emerald-400 mb-2 border-l-2 border-emerald-400 pl-2">Готові</h4>
+                    <div id="queue-ready" class="space-y-3"></div>
+                </div>
             </div>
         </div>
+    </div>
 
-        <div class="lg:col-span-3 space-y-6">
-            
-            <div class="admin-card rounded-2xl p-5">
-                <h3 class="text-lg font-black mb-4 border-b border-zinc-800 pb-2 flex items-center gap-2"><i class="fas fa-pizza-slice text-indigo-500"></i> Поточні замовлення</h3>
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="orders-queue-grid">
+    <div id="tab-monitoring" class="tab-content space-y-4 hidden">
+        <h2 class="text-sm uppercase tracking-wider font-bold text-zinc-500"><i class="fas fa-desktop text-indigo-400 mr-2"></i> Екрани та дії клієнтів в реальному часі</h2>
+        <div id="devices-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <p class="text-zinc-500 text-xs">Немає підключених столів...</p>
+        </div>
+    </div>
+
+    <div id="tab-menu" class="tab-content grid grid-cols-1 lg:grid-cols-3 gap-6 hidden">
+        <div class="admin-card rounded-2xl p-5 h-fit">
+            <h3 class="text-sm font-bold uppercase tracking-wider mb-4 text-zinc-400">Додати / Редагувати страву</h3>
+            <form id="menu-form" onsubmit="saveMenuItem(event)" class="space-y-3 text-xs">
+                <input type="hidden" id="menu-id">
+                <div>
+                    <label class="block text-zinc-500 mb-1">Назва страви</label>
+                    <input type="text" id="menu-name" required class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+                </div>
+                <div>
+                    <label class="block text-zinc-500 mb-1">Категорія</label>
+                    <input type="text" id="menu-category" required placeholder="Напр: Десерти, Напої" class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
+                </div>
+                <div class="grid grid-cols-2 gap-2">
                     <div>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-amber-500 mb-2 border-l-2 border-amber-500 pl-2">Нові</h4>
-                        <div id="queue-pending" class="space-y-3"></div>
+                        <label class="block text-zinc-500 mb-1">Ціна (₴)</label>
+                        <input type="number" step="0.01" id="menu-price" required class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
                     </div>
-                    <div>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-indigo-400 mb-2 border-l-2 border-indigo-400 pl-2">Готуються</h4>
-                        <div id="queue-cooking" class="space-y-3"></div>
-                    </div>
-                    <div>
-                        <h4 class="text-xs font-bold uppercase tracking-wider text-emerald-400 mb-2 border-l-2 border-emerald-400 pl-2">Готові</h4>
-                        <div id="queue-ready" class="space-y-3"></div>
+                    <div class="flex items-end pb-2 pl-2">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" id="menu-available" checked class="rounded bg-zinc-950 border-zinc-700 text-indigo-600 focus:ring-0 w-4 h-4">
+                            <span class="text-zinc-400 font-bold">В наявності</span>
+                        </label>
                     </div>
                 </div>
-            </div>
-
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div class="admin-card rounded-2xl p-5 h-fit">
-                    <h3 class="text-sm font-bold uppercase tracking-wider mb-4 text-zinc-400">Редактор меню</h3>
-                    <form id="menu-form" onsubmit="saveMenuItem(event)" class="space-y-3 text-xs">
-                        <input type="hidden" id="menu-id">
-                        <div>
-                            <label class="block text-zinc-500 mb-1">Назва страви</label>
-                            <input type="text" id="menu-name" required class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
-                        </div>
-                        <div>
-                            <label class="block text-zinc-500 mb-1">Категорія</label>
-                            <input type="text" id="menu-category" required placeholder="Напр: Десерти, Напої" class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
-                        </div>
-                        <div class="grid grid-cols-2 gap-2">
-                            <div>
-                                <label class="block text-zinc-500 mb-1">Ціна (₴)</label>
-                                <input type="number" step="0.01" id="menu-price" required class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
-                            </div>
-                            <div class="flex items-end pb-2 pl-2">
-                                <label class="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" id="menu-available" checked class="rounded bg-zinc-950 border-zinc-700 text-indigo-600 focus:ring-0 w-4 h-4">
-                                    <span class="text-zinc-400 font-bold">В наявності</span>
-                                </label>
-                            </div>
-                        </div>
-                        <div>
-                            <label class="block text-zinc-500 mb-1">Опис страви</label>
-                            <textarea id="menu-description" rows="2" class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-200 focus:outline-none focus:border-indigo-500 resize-none"></textarea>
-                        </div>
-                        <div>
-                            <label class="block text-zinc-500 mb-1">Посилання на фото URL</label>
-                            <input type="text" id="menu-image" placeholder="https://..." class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
-                        </div>
-                        <div class="flex gap-2 pt-2">
-                            <button type="button" onclick="resetMenuForm()" class="flex-1 bg-zinc-900 border border-zinc-800 py-2.5 rounded-xl text-zinc-400 font-bold">Очистити</button>
-                            <button type="submit" class="flex-1 bg-indigo-600 hover:bg-indigo-500 py-2.5 rounded-xl text-white font-bold">Зберегти</button>
-                        </div>
-                    </form>
+                <div>
+                    <label class="block text-zinc-500 mb-1">Опис страви</label>
+                    <textarea id="menu-description" rows="2" class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-200 focus:outline-none focus:border-indigo-500 resize-none"></textarea>
                 </div>
-
-                <div class="admin-card rounded-2xl p-5 md:col-span-2">
-                    <h3 class="text-sm font-bold uppercase tracking-wider mb-4 text-zinc-400">Поточний асортимент страви</h3>
-                    <div class="overflow-y-auto max-h-[400px] text-xs space-y-2" id="admin-menu-list"></div>
+                <div>
+                    <label class="block text-zinc-500 mb-1">Посилання на фото URL</label>
+                    <input type="text" id="menu-image" placeholder="https://..." class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
                 </div>
-            </div>
+                <div class="flex gap-2 pt-2">
+                    <button type="button" onclick="resetMenuForm()" class="flex-1 bg-zinc-900 border border-zinc-800 py-2.5 rounded-xl text-zinc-400 font-bold">Очистити</button>
+                    <button type="submit" class="flex-1 bg-indigo-600 hover:bg-indigo-500 py-2.5 rounded-xl text-white font-bold">Зберегти</button>
+                </div>
+            </form>
+        </div>
 
-            <div class="admin-card rounded-2xl p-5">
-                <h3 class="text-sm font-bold uppercase tracking-wider mb-4 text-zinc-400"><i class="fas fa-star text-amber-500 mr-1"></i> Останні відгуки гостей</h3>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="admin-reviews-list"></div>
-            </div>
+        <div class="admin-card rounded-2xl p-5 lg:col-span-2">
+            <h3 class="text-sm font-bold uppercase tracking-wider mb-4 text-zinc-400">Поточний асортимент страв</h3>
+            <div class="overflow-y-auto max-h-[500px] text-xs space-y-2" id="admin-menu-list"></div>
+        </div>
+    </div>
 
+    <div id="tab-reviews" class="tab-content admin-card rounded-2xl p-5 hidden">
+        <h3 class="text-sm font-bold uppercase tracking-wider mb-4 text-zinc-400"><i class="fas fa-star text-amber-500 mr-1"></i> Останні відгуки гостей</h3>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4" id="admin-reviews-list"></div>
+    </div>
+
+    <div id="nexus-global-modal" class="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
+        <div class="bg-zinc-950 border border-zinc-800 p-6 rounded-2xl w-full max-w-sm shadow-2xl space-y-4">
+            <h3 id="nexus-modal-title" class="text-xs font-black uppercase tracking-wider text-indigo-400">Система</h3>
+            <p id="nexus-modal-text" class="text-sm text-zinc-300 font-medium"></p>
+            <input type="text" id="nexus-modal-input" class="hidden w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 text-center font-bold">
+            <div class="flex gap-3 pt-2">
+                <button id="nexus-btn-cancel" class="hidden flex-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-400 p-3 rounded-xl text-xs font-bold transition-all">Скасувати</button>
+                <button id="nexus-btn-confirm" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white p-3 rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/20 transition-all">ОК</button>
+            </div>
         </div>
     </div>
 
     <script>
-        // Глобальні змінні для збереження поточних дій
-let modalCallback = null;
+        let modalCallback = null;
 
-// 1. ПОВНА ЗАМІНА ALERT
-function showAlert(message, title = "Сповіщення") {
-    const modal = document.getElementById('nexus-global-modal');
-    document.getElementById('nexus-modal-title').innerText = title;
-    document.getElementById('nexus-modal-text').innerText = message;
-    
-    document.getElementById('nexus-modal-input').classList.add('hidden');
-    document.getElementById('nexus-btn-cancel').classList.add('hidden');
-    
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-    
-    modalCallback = function(status) {
-        modal.classList.add('hidden');
-    };
-}
-
-// 2. ПОВНА ЗАМІНА CONFIRM (Передай функцію-колбек наступним параметром)
-function showConfirm(message, onConfirm, title = "Підтвердження") {
-    const modal = document.getElementById('nexus-global-modal');
-    document.getElementById('nexus-modal-title').innerText = title;
-    document.getElementById('nexus-modal-text').innerText = message;
-    
-    document.getElementById('nexus-modal-input').classList.add('hidden');
-    document.getElementById('nexus-btn-cancel').classList.remove('hidden');
-    
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-    
-    modalCallback = function(status) {
-        modal.classList.add('hidden');
-        if (status && typeof onConfirm === 'function') onConfirm();
-    };
-}
-
-// 3. ПОВНА ЗАМІНА PROMPT (Повертає значення у функцію-колбек)
-function showPrompt(message, onValueSubmitted, title = "Введення даних") {
-    const modal = document.getElementById('nexus-global-modal');
-    const input = document.getElementById('nexus-modal-input');
-    
-    document.getElementById('nexus-modal-title').innerText = title;
-    document.getElementById('nexus-modal-text').innerText = message;
-    
-    input.value = "";
-    input.classList.remove('hidden');
-    document.getElementById('nexus-btn-cancel').classList.remove('hidden');
-    
-    modal.classList.remove('hidden');
-    modal.classList.add('flex');
-    input.focus();
-    
-    modalCallback = function(status) {
-        modal.classList.add('hidden');
-        if (status && typeof onValueSubmitted === 'function') {
-            onValueSubmitted(input.value);
-        } else if (!status && typeof onValueSubmitted === 'function') {
-            onValueSubmitted(null);
+        function showAlert(message, title = "Сповіщення") {
+            const modal = document.getElementById('nexus-global-modal');
+            document.getElementById('nexus-modal-title').innerText = title;
+            document.getElementById('nexus-modal-text').innerText = message;
+            document.getElementById('nexus-modal-input').classList.add('hidden');
+            document.getElementById('nexus-btn-cancel').classList.add('hidden');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            modalCallback = function(status) { modal.classList.add('hidden'); };
         }
-    };
-}
 
-// Прив'язка кліків до кнопок модалки
-document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('nexus-btn-confirm').addEventListener('click', () => {
-        if (modalCallback) modalCallback(true);
-    });
-    document.getElementById('nexus-btn-cancel').addEventListener('click', () => {
-        if (modalCallback) modalCallback(false);
-    });
-});
+        function showConfirm(message, onConfirm, title = "Підтвердження") {
+            const modal = document.getElementById('nexus-global-modal');
+            document.getElementById('nexus-modal-title').innerText = title;
+            document.getElementById('nexus-modal-text').innerText = message;
+            document.getElementById('nexus-modal-input').classList.add('hidden');
+            document.getElementById('nexus-btn-cancel').classList.remove('hidden');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+            modalCallback = function(status) {
+                modal.classList.add('hidden');
+                if (status && typeof onConfirm === 'function') onConfirm();
+            };
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('nexus-btn-confirm').addEventListener('click', () => { if (modalCallback) modalCallback(true); });
+            document.getElementById('nexus-btn-cancel').addEventListener('click', () => { if (modalCallback) modalCallback(false); });
+        });
+
+        // ФУНКЦІЯ ПЕРЕКЛЮЧЕННЯ ВКЛАДОК
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+            document.getElementById(`tab-${tabName}`).classList.remove('hidden');
+            
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.remove('bg-indigo-600', 'text-white', 'shadow-lg', 'border-indigo-500');
+                btn.classList.add('bg-zinc-900', 'text-zinc-400', 'border-zinc-800');
+            });
+            
+            const activeBtn = document.getElementById(`btn-tab-${tabName}`);
+            activeBtn.classList.remove('bg-zinc-900', 'text-zinc-400', 'border-zinc-800');
+            activeBtn.classList.add('bg-indigo-600', 'text-white', 'shadow-lg', 'border-indigo-500');
+        }
+
         const socket = io();
         let currentDevices = {};
 
@@ -949,7 +892,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         socket.on('receive_frame', (data) => {
-            // Безперервний прийом зображення екрана від клієнта без ручного запиту
             const imgEl = document.getElementById(`stream-${data.uuid}`);
             if (imgEl && data.frame) {
                 imgEl.src = data.frame;
@@ -1077,8 +1019,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         function updateOrderStatus(id, status) { socket.emit('order_status_update', { id, status }); }
-        function deleteOrder(id) { if(confirm('Видалити замовлення?')) socket.emit('order_delete', { id }); }
-        function deleteReview(id) { if(confirm('Видалити відгук?')) socket.emit('reviews_delete', { id }); }
+        
+        function deleteOrder(id) { 
+            showConfirm('Видалити замовлення?', () => { socket.emit('order_delete', { id }); });
+        }
+        
+        function deleteReview(id) { 
+            showConfirm('Видалити відгук?', () => { socket.emit('reviews_delete', { id }); });
+        }
 
         function saveMenuItem(e) {
             e.preventDefault();
@@ -1095,6 +1043,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         function editMenuItem(id, name, cat, price, desc, img, avail) {
+            switchTab('menu'); // Автоматично перемикаємо на вкладку редактора
             document.getElementById('menu-id').value = id;
             document.getElementById('menu-name').value = name;
             document.getElementById('menu-category').value = cat;
@@ -1104,10 +1053,16 @@ document.addEventListener('DOMContentLoaded', () => {
             document.getElementById('menu-available').checked = (avail === 'true' || avail === true);
         }
 
-        function deleteMenuItem(id) { if(confirm('Видалити страву з меню?')) socket.emit('menu_delete', { id }); }
+        function deleteMenuItem(id) { 
+            showConfirm('Видалити страву з меню?', () => { socket.emit('menu_delete', { id }); });
+        }
+        
         function resetMenuForm() { document.getElementById('menu-form').reset(); document.getElementById('menu-id').value = ''; }
         
-        function clearDatabase() { if(confirm('Ви впевнені, що хочете ПОВНІСТЮ очистити всю базу даних? Цю дію неможливо скасувати.')) socket.emit('admin_clear_db'); }
+        function clearDatabase() { 
+            showConfirm('Ви впевнені, що хочете ПОВНІСТЮ очистити базу даних? Цю дію неможливо скасувати.', () => { socket.emit('admin_clear_db'); }); 
+        }
+        
         function exportDatabase() { window.location.href = '/export_db'; }
         
         function importDatabase() {
@@ -1131,7 +1086,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
                 const osc = audioCtx.createOscillator();
                 const gain = audioCtx.createGain();
-                osc.type = 'sine'; osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // Ре5
+                osc.type = 'sine'; osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); 
                 gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
                 osc.connect(gain); gain.connect(audioCtx.destination);
                 osc.start(); osc.stop(audioCtx.currentTime + 0.3);
@@ -1167,17 +1122,6 @@ LOGIN_HTML = """
             <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-black py-3.5 rounded-xl transition shadow-lg active:scale-95">Увійти</button>
         </form>
     </div>
-    <div id="nexus-global-modal" class="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
-    <div class="bg-zinc-950 border border-zinc-800 p-6 rounded-2xl w-full max-w-sm shadow-2xl space-y-4">
-        <h3 id="nexus-modal-title" class="text-xs font-black uppercase tracking-wider text-indigo-400">Система</h3>
-        <p id="nexus-modal-text" class="text-sm text-zinc-300 font-medium"></p>
-        <input type="text" id="nexus-modal-input" class="hidden w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-sm text-zinc-200 focus:outline-none focus:border-indigo-500 text-center font-bold">
-        <div class="flex gap-3 pt-2">
-            <button id="nexus-btn-cancel" class="hidden flex-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-zinc-400 p-3 rounded-xl text-xs font-bold transition-all">Скасувати</button>
-            <button id="nexus-btn-confirm" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white p-3 rounded-xl text-xs font-bold shadow-lg shadow-indigo-600/20 transition-all">ОК</button>
-        </div>
-    </div>
-</div>
 </body>
 </html>
 """
