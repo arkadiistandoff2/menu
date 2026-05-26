@@ -800,7 +800,7 @@ ADMIN_HTML = """
                     <textarea id="menu-description" rows="2" class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-200 focus:outline-none focus:border-indigo-500 resize-none"></textarea>
                 </div>
                 <div>
-                    <label class="block text-zinc-500 mb-1">Посилання на фото URL</label>
+                    <label class="block text-zinc-500 mb-1">Посилання на photo URL</label>
                     <input type="text" id="menu-image" placeholder="https://..." class="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-2.5 text-zinc-200 focus:outline-none focus:border-indigo-500">
                 </div>
                 <div class="flex gap-2 pt-2">
@@ -866,7 +866,6 @@ ADMIN_HTML = """
             document.getElementById('nexus-btn-cancel').addEventListener('click', () => { if (modalCallback) modalCallback(false); });
         });
 
-        // ФУНКЦІЯ ПЕРЕКЛЮЧЕННЯ ВКЛАДОК
         function switchTab(tabName) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
             document.getElementById(`tab-${tabName}`).classList.remove('hidden');
@@ -1043,7 +1042,7 @@ ADMIN_HTML = """
         }
 
         function editMenuItem(id, name, cat, price, desc, img, avail) {
-            switchTab('menu'); // Автоматично перемикаємо на вкладку редактора
+            switchTab('menu');
             document.getElementById('menu-id').value = id;
             document.getElementById('menu-name').value = name;
             document.getElementById('menu-category').value = cat;
