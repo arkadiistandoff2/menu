@@ -853,6 +853,62 @@ ADMIN_HTML = """
     </div>
 
     <script>
+    document.addEventListener("DOMContentLoaded", () => {
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('menu-file-input');
+    const nameIndicator = document.getElementById('file-name-indicator');
+    const urlInput = document.getElementById('menu-image');
+
+    // Підсвічування зони при перетягуванні над нею
+    ['dragenter', 'dragover'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            dropZone.classList.add('border-indigo-500', 'bg-zinc-900');
+        }, false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+        dropZone.addEventListener(eventName, (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('border-indigo-500', 'bg-zinc-900');
+        }, false);
+    });
+
+    // Обробка самого дропу (коли кидають файл)
+    dropZone.addEventListener('drop', (e) => {
+        const dt = e.dataTransfer;
+        const files = dt.files;
+        if (files.length > 0) {
+            fileInput.files = files; // Передаємо файл в інпут
+            handleFile(files[0]);
+        }
+    });
+
+    // Обробка кліку та звичайного вибору через провідник
+    fileInput.addEventListener('change', (e) => {
+        if (fileInput.files.length > 0) {
+            handleFile(fileInput.files[0]);
+        }
+    });
+
+    // Функція читання файлу в Base64
+    function handleFile(file) {
+        if (!file.type.startsWith('image/')) {
+            alert('Будь ласка, виберіть саме зображення!');
+            return;
+        }
+        nameIndicator.innerText = `Обрано: ${file.name}`;
+        nameIndicator.classList.remove('text-zinc-600');
+        nameIndicator.classList.add('text-emerald-400', 'font-bold');
+
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onloadend = function() {
+            // Записуємо готовий Base64 код картинки в наш старий прихований інпут URL
+            urlInput.value = reader.result;
+        }
+    }
+});
         let modalCallback = null;
 
         function showAlert(message, title = "Сповіщення") {
@@ -1126,7 +1182,17 @@ ADMIN_HTML = """
             showConfirm('Видалити страву з меню?', () => { socket.emit('menu_delete', { id }); });
         }
         
-        function resetMenuForm() { document.getElementById('menu-form').reset(); document.getElementById('menu-id').value = ''; }
+        function resetMenuForm() { 
+    document.getElementById('menu-form').reset(); 
+    document.getElementById('menu-id').value = ''; 
+    // Скидаємо наш кастомний індикатор файлу
+    const indicator = document.getElementById('file-name-indicator');
+    if (indicator) {
+        indicator.innerText = 'Файл не обрано';
+        indicator.classList.remove('text-emerald-400', 'font-bold');
+        indicator.classList.add('text-zinc-600');
+    }
+}
         
         function clearDatabase() { 
             showConfirm('Ви впевнені, що хочете ПОВНІСТЮ очистити базу даних? Цю дію неможливо скасувати.', () => { socket.emit('admin_clear_db'); }); 
