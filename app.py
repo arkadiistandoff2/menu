@@ -41,7 +41,7 @@ def serialize_doc(doc):
         return None
     d = dict(doc)
     d['_id'] = str(d['_id'])
-    for k, v d.items():
+    for k, v in d.items():
         if isinstance(v, datetime):
             d[k] = v.strftime('%d.%m.%Y %H:%M')
     return d
