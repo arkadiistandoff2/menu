@@ -567,7 +567,7 @@ CUSTOMER_HTML = """
             // Повний розмір зображення без рамок (rounded-t-2xl)
             grid.innerHTML = filtered.map(item => {
                 const avail = item.available !== false;
-                const img = item.image ? `<img src="${item.image}" class="w-full h-32 object-cover rounded-t-2xl" />` : `<div class="w-full h-32 bg-zinc-900 flex items-center justify-center text-3xl rounded-t-2xl">🍽️</div>`;
+                const img = item.image ? `<img src="${item.image}" class="w-full h-32 object-contain bg-zinc-950 rounded-t-2xl" />` : ...
                 return `
                     <div class="glass-card rounded-2xl flex flex-col justify-between overflow-hidden ${!avail ? 'opacity-40 grayscale' : ''}">
                         ${img}
@@ -1046,7 +1046,7 @@ ADMIN_HTML = """
 
             grid.innerHTML = filtered.map(item => `
                 <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden flex flex-col justify-between">
-                    ${item.image ? `<img src="${item.image}" class="w-full h-24 object-cover border-b border-zinc-800">` : `<div class="w-full h-24 bg-zinc-950 flex items-center justify-center text-xl border-b border-zinc-800">🍽️</div>`}
+                   ${item.image ? `<img src="${item.image}" class="w-full h-24 object-contain bg-zinc-950 border-b border-zinc-800">` : ...}
                     <div class="p-2 flex-1 flex flex-col justify-between">
                         <div>
                             <h4 class="font-black text-[11px] text-zinc-200 line-clamp-1">${item.name}</h4>
