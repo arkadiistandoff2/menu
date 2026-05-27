@@ -438,15 +438,19 @@ CUSTOMER_HTML = """
         }
 
         /* Плавні переходи та застосування змінних */
-        body { background-color: var(--bg-base) !important; color: var(--text-base) !important; transition: all 0.5s ease; font-family: system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
-        .bg-zinc-950, .bg-zinc-900, .glass-card { background-color: var(--bg-panel) !important; transition: all 0.5s ease; }
-        header { background-color: var(--bg-header) !important; transition: all 0.5s ease; }
-        .border-zinc-800, .border-zinc-900 { border-color: var(--border-color) !important; transition: all 0.5s ease; }
-        .text-zinc-100, .text-zinc-200, .text-zinc-300 { color: var(--text-base) !important; transition: all 0.5s ease; }
-        .text-zinc-400, .text-zinc-500, .text-zinc-600 { color: var(--text-muted) !important; transition: all 0.5s ease; }
-        .bg-indigo-600 { background-color: var(--accent) !important; transition: all 0.5s ease; color: #ffffff !important; }
-        .text-indigo-400, .text-indigo-500 { color: var(--accent) !important; transition: all 0.5s ease; }
-        .border-indigo-500, .border-indigo-500\\/20, .border-indigo-500\\/30 { border-color: var(--accent) !important; transition: all 0.5s ease; }
+        body { background-color: var(--bg-base) !important; color: var(--text-base) !important; transition: background-color 0.5s ease, color 0.5s ease; font-family: system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
+        .bg-zinc-950, .bg-zinc-900, .glass-card { background-color: var(--bg-panel) !important; transition: background-color 0.5s ease; }
+        header { background-color: var(--bg-header) !important; transition: background-color 0.5s ease; }
+        .border-zinc-800, .border-zinc-900 { border-color: var(--border-color) !important; transition: border-color 0.5s ease; }
+        .text-zinc-100, .text-zinc-200, .text-zinc-300 { color: var(--text-base) !important; transition: color 0.5s ease; }
+        .text-zinc-400, .text-zinc-500, .text-zinc-600 { color: var(--text-muted) !important; transition: color 0.5s ease; }
+        .bg-indigo-600 { background-color: var(--accent) !important; transition: background-color 0.5s ease; color: #ffffff !important; }
+        .text-indigo-400, .text-indigo-500 { color: var(--accent) !important; transition: color 0.5s ease; }
+        .border-indigo-500, .border-indigo-500\\/20, .border-indigo-500\\/30 { border-color: var(--accent) !important; transition: border-color 0.5s ease; }
+
+        /* Стилі для кнопок категорій, щоб вони реагували на зміну теми */
+        .cat-btn { background-color: var(--bg-panel) !important; color: var(--text-muted) !important; border-color: var(--border-color) !important; }
+        .cat-btn.active { background-color: var(--accent) !important; color: #ffffff !important; border-color: var(--accent) !important; }
 
         .hide-scroll::-webkit-scrollbar { display: none; }
         .glass-card { border: 1px solid var(--border-color); }
@@ -492,9 +496,17 @@ CUSTOMER_HTML = """
         <div class="flex justify-between items-center mb-3 mt-2">
             <h1 class="text-xl font-black tracking-tight">NEXUS <span class="text-indigo-500">CAFE</span></h1>
             <div class="flex items-center gap-2">
-                <button id="theme-toggle-btn" class="w-8 h-8 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 active:scale-90 transition-transform shadow-md">
-                    <i class="fas fa-palette"></i>
-                </button>
+                <div class="relative flex items-center">
+                    <button id="theme-toggle-btn" onclick="toggleThemeMenu(event)" class="relative z-20 w-8 h-8 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 active:scale-90 transition-transform shadow-md">
+                        <i class="fas fa-palette"></i>
+                    </button>
+                    <div id="theme-circles" class="absolute right-10 flex gap-2 items-center opacity-0 pointer-events-none translate-x-4 transition-all duration-300 ease-out z-10">
+                        <button onclick="setTheme('dark')" class="w-7 h-7 rounded-full bg-[#09090b] border-2 border-[#27272a] shadow-lg transform hover:scale-110 active:scale-95 transition-transform"></button>
+                        <button onclick="setTheme('light')" class="w-7 h-7 rounded-full bg-[#f8fafc] border-2 border-[#e2e8f0] shadow-lg transform hover:scale-110 active:scale-95 transition-transform"></button>
+                        <button onclick="setTheme('wood')" class="w-7 h-7 rounded-full bg-[#292524] border-2 border-[#d97706] shadow-lg transform hover:scale-110 active:scale-95 transition-transform"></button>
+                        <button onclick="setTheme('sakura')" class="w-7 h-7 rounded-full bg-[#4c1d95] border-2 border-[#ec4899] shadow-lg transform hover:scale-110 active:scale-95 transition-transform"></button>
+                    </div>
+                </div>
                 <button onclick="openMyOrdersModal()" class="text-[11px] font-bold text-indigo-400 bg-indigo-500/10 px-3 py-2 rounded-xl border border-indigo-500/20 flex items-center gap-1.5 active:scale-95 transition-all">
                     <i class="fas fa-receipt"></i> Мої чеки
                 </button>
@@ -514,19 +526,6 @@ CUSTOMER_HTML = """
             </div>
             <span class="text-sm font-black bg-black/20 px-3 py-1.5 rounded-xl"><span id="float-cart-total">0</span> ₴</span>
         </button>
-    </div>
-
-    <div id="theme-menu-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
-        <div class="bg-zinc-950 border border-zinc-800 p-5 rounded-2xl w-full max-w-xs space-y-4 shadow-2xl">
-            <h3 class="text-sm font-black text-center text-indigo-400 uppercase tracking-widest">Оберіть тему</h3>
-            <div class="grid grid-cols-2 gap-3">
-                <button onclick="setTheme('dark')" class="p-3 rounded-xl bg-[#09090b] border border-[#27272a] text-[#f4f4f5] font-bold text-xs flex flex-col items-center gap-2 transition-all active:scale-95"><div class="w-6 h-6 rounded-full bg-[#4f46e5]"></div>Кіберпанк</button>
-                <button onclick="setTheme('light')" class="p-3 rounded-xl bg-[#f8fafc] border border-[#e2e8f0] text-[#0f172a] font-bold text-xs flex flex-col items-center gap-2 transition-all active:scale-95"><div class="w-6 h-6 rounded-full bg-[#2563eb]"></div>Світла</button>
-                <button onclick="setTheme('wood')" class="p-3 rounded-xl bg-[#292524] border border-[#57534e] text-[#fef3c7] font-bold text-xs flex flex-col items-center gap-2 transition-all active:scale-95"><div class="w-6 h-6 rounded-full bg-[#d97706]"></div>Дерево</button>
-                <button onclick="setTheme('sakura')" class="p-3 rounded-xl bg-[#2e1065] border border-[#6d28d9] text-[#fdf4ff] font-bold text-xs flex flex-col items-center gap-2 transition-all active:scale-95"><div class="w-6 h-6 rounded-full bg-[#ec4899]"></div>Сакура</button>
-            </div>
-            <button onclick="closeModal('theme-menu-modal')" class="w-full bg-zinc-900 border border-zinc-800 py-3 rounded-xl text-xs font-bold text-zinc-400 mt-2 active:scale-95">Закрити</button>
-        </div>
     </div>
 
     <div id="cart-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex-col justify-end">
@@ -593,39 +592,40 @@ CUSTOMER_HTML = """
         let savedCart = localStorage.getItem(`nexus_cart_${tableId}_${clientUUID}`);
         if(savedCart) cart = JSON.parse(savedCart);
 
-        // --- ЛОГІКА ТЕМ ОФОРМЛЕННЯ (LONG PRESS) ---
-        let themePressTimer;
-        const themeBtn = document.getElementById('theme-toggle-btn');
-        const themeModal = 'theme-menu-modal';
-
-        themeBtn.addEventListener('mousedown', startThemePress);
-        themeBtn.addEventListener('touchstart', startThemePress, {passive: true});
-        themeBtn.addEventListener('mouseup', endThemePress);
-        themeBtn.addEventListener('touchend', endThemePress);
-        themeBtn.addEventListener('mouseleave', cancelThemePress);
-
-        function startThemePress(e) {
-            themePressTimer = setTimeout(() => {
-                themePressTimer = null;
-                openModal(themeModal);
-            }, 500); // 500ms long press
-        }
-
-        function endThemePress(e) {
-            if (themePressTimer) {
-                clearTimeout(themePressTimer);
-                themePressTimer = null;
-                // Звичайний короткий клік - перемикаємо між dark і light
-                let current = document.body.getAttribute('data-theme');
-                setTheme(current === 'light' ? 'dark' : 'light');
+        // --- НОВА ЛОГІКА ТЕМ ОФОРМЛЕННЯ (Плавне викочування кульок) ---
+        function toggleThemeMenu(e) {
+            if(e) e.stopPropagation();
+            const container = document.getElementById('theme-circles');
+            if (container.classList.contains('opacity-0')) {
+                // Показуємо кульки
+                container.classList.remove('opacity-0', 'pointer-events-none', 'translate-x-4');
+                container.classList.add('opacity-100', 'translate-x-0');
+            } else {
+                closeThemeMenu();
             }
         }
-        function cancelThemePress() { if (themePressTimer) { clearTimeout(themePressTimer); themePressTimer = null; } }
+
+        function closeThemeMenu() {
+            const container = document.getElementById('theme-circles');
+            if(container) {
+                container.classList.add('opacity-0', 'pointer-events-none', 'translate-x-4');
+                container.classList.remove('opacity-100', 'translate-x-0');
+            }
+        }
+
+        // Закривати меню тем при кліку в будь-яке інше місце
+        document.addEventListener('click', (e) => {
+            const btn = document.getElementById('theme-toggle-btn');
+            const circles = document.getElementById('theme-circles');
+            if (btn && circles && !btn.contains(e.target) && !circles.contains(e.target)) {
+                closeThemeMenu();
+            }
+        });
 
         function setTheme(theme) {
             document.body.setAttribute('data-theme', theme);
             localStorage.setItem('nexus_theme', theme);
-            closeModal(themeModal);
+            closeThemeMenu();
         }
         setTheme(localStorage.getItem('nexus_theme') || 'dark');
         // -------------------------------------------
@@ -671,7 +671,8 @@ CUSTOMER_HTML = """
         function renderCategories() {
             const bar = document.getElementById('category-bar');
             const cats = ['Всі', ...new Set(menuItems.map(i => i.category))];
-            bar.innerHTML = cats.map(c => `<button onclick="setCategory('${c}')" class="px-3 py-2 rounded-xl whitespace-nowrap font-black text-[11px] uppercase tracking-wider transition-all ${currentCategory === c ? 'bg-indigo-600 text-white shadow-md border-transparent' : 'bg-zinc-900 text-zinc-400 border-zinc-800'} border">${c}</button>`).join('');
+            // Використовуємо кастомні класи cat-btn для підтримки зміни тем
+            bar.innerHTML = cats.map(c => `<button onclick="setCategory('${c}')" class="px-3 py-2 rounded-xl whitespace-nowrap font-black text-[11px] uppercase tracking-wider transition-all border ${currentCategory === c ? 'cat-btn active shadow-md' : 'cat-btn'}">${c}</button>`).join('');
         }
 
         function setCategory(cat) { currentCategory = cat; renderCategories(); renderMenu(); sendLiveTelemetry(); }
@@ -681,7 +682,6 @@ CUSTOMER_HTML = """
             let filtered = currentCategory === 'Всі' ? menuItems : menuItems.filter(i => i.category === currentCategory);
             if(filtered.length === 0) { grid.innerHTML = `<div class="col-span-2 text-center text-zinc-500 py-10 text-xs font-bold">Порожньо</div>`; return; }
 
-            // ЗОБРАЖЕННЯ У ПОВНОМУ РОЗМІРІ БЕЗ ОБРІЗАНЬ (object-contain bg-zinc-950)
             grid.innerHTML = filtered.map(item => {
                 const avail = item.available !== false;
                 const img = item.image ? `<img src="${item.image}" class="w-full h-32 object-contain bg-zinc-950 rounded-t-2xl" />` : `<div class="w-full h-32 bg-zinc-900 flex items-center justify-center text-3xl rounded-t-2xl">🍽️</div>`;
@@ -745,14 +745,15 @@ CUSTOMER_HTML = """
             });
             if(itemsList.length === 0) return;
             
-            const comment = document.getElementById('order-comment').value;
+            const comment = document.getElementById('order-comment').value.trim();
             const takeaway = document.getElementById('order-takeaway').checked;
             let total = 0; itemsList.forEach(i => total += i.price * i.qty);
 
             socket.emit('order_create', {
                 uuid: clientUUID,
                 items: itemsList, total_price: total,
-                table: takeaway ? 'На виніс' : tableId, comment: comment
+                table: takeaway ? 'На виніс' : tableId, 
+                comment: comment
             }, (res) => {
                 if(res && res.status === 'success') {
                     showToast(`Замовлення #${res.order_number} надіслано!`);
@@ -1242,7 +1243,7 @@ ADMIN_HTML = """
             }
         }
 
-        socket.on('new_order_alert', (order) => { /* showAlert(`Нове замовлення #${order.order_number}! Стіл: ${order.table}.`); */  });
+        socket.on('new_order_alert', (order) => { showAlert(`Нове замовлення #${order.order_number}! Стіл: ${order.table}.`); });
         socket.on('waiter_alert', (data) => { showAlert(`🔔 Офіціанта викликають на Стіл #${data.table}`); });
 
         // РЕНДЕР КАНБАН ДОШКИ ЗАМОВЛЕНЬ
@@ -1257,7 +1258,13 @@ ADMIN_HTML = """
             orders.forEach(o => {
                 if (o.status === 'Закрито') return;
                 const itemsHtml = o.items.map(i => `<div class="font-medium text-zinc-300 text-[10px] leading-tight">• ${i.name} <span class="text-indigo-400 font-bold">x${i.qty}</span></div>`).join('');
-                const commentHtml = o.comment ? `<div class="text-[9px] text-amber-500 bg-amber-500/10 p-1.5 rounded mt-1 font-bold">💡 ${o.comment}</div>` : '';
+                
+                // Візуальне покращення для коментарів та статусу "На виніс"
+                const commentHtml = o.comment ? `<div class="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg mt-1 font-bold shadow-inner"><i class="fas fa-comment-dots"></i> ${o.comment}</div>` : '';
+                
+                let tableDisplay = o.table === 'На виніс'
+                    ? `<span class="bg-indigo-600 px-2 py-0.5 rounded text-[10px] text-white font-black shadow-lg"><i class="fas fa-shopping-bag"></i> З СОБОЮ</span>`
+                    : `<span class="bg-zinc-950 px-1.5 py-0.5 rounded text-[9px] text-zinc-400 border border-zinc-800">Стіл ${o.table}</span>`;
                 
                 let actionBtn = '';
                 if(o.status === 'pending') { actionBtn = `<button onclick="updateOrderStatus('${o._id}', 'cooking')" class="w-full bg-amber-500 text-zinc-950 font-black p-1.5 rounded-lg mt-2 text-[10px]">Готувати</button>`; cP++; }
@@ -1268,7 +1275,7 @@ ADMIN_HTML = """
                     <div draggable="true" ondragstart="handleDragStart(event, '${o._id}')" class="bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-xs space-y-1 cursor-grab active:cursor-grabbing hover:border-indigo-500/50 transition-all select-none">
                         <div class="flex justify-between items-center font-bold border-b border-zinc-800 pb-1 mb-1 pointer-events-none">
                             <span class="text-indigo-400 text-[11px]">Замовлення #${o.order_number}</span>
-                            <span class="bg-zinc-950 px-1.5 py-0.5 rounded text-[9px] text-zinc-400 border border-zinc-800">Стіл ${o.table}</span>
+                            ${tableDisplay}
                         </div>
                         <div class="space-y-0.5 max-h-20 overflow-y-auto pointer-events-none pr-1 hide-scroll">${itemsHtml}</div>
                         ${commentHtml}
