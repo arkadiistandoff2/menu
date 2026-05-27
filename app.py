@@ -60,23 +60,39 @@ def get_all_reviews():
     return [serialize_doc(r) for r in db.reviews.find().sort("timestamp", -1)]
 
 def get_archive_data():
-    orders = [serialize_doc(o) for o in db.orders.find().sort("timestamp", -1)]
+    orders = [serialize_doc(o) for o in db.orders.find({"status": "Закрито"}).sort("timestamp", -1)]
     devices = [serialize_doc(d) for d in db.device_archive.find().sort("last_seen", -1)]
     return {'orders': orders, 'devices': devices}
 
 def calculate_dashboard_stats():
     orders = list(db.orders.find())
     reviews = list(db.reviews.find())
+    
     total_revenue = sum(float(o.get('total_price', 0)) for o in orders if o.get('status') == 'Закрито')
     active_orders_count = sum(1 for o in orders if o.get('status') in ['pending', 'cooking', 'ready'])
+    
     avg_rating = 5.0
     if reviews:
         avg_rating = round(sum(int(r.get('rating', 5)) for r in reviews) / len(reviews), 1)
+        
+    # Статистика проданих страв (беремо тільки закриті/оплачені замовлення)
+    item_sales = {}
+    for o in orders:
+        if o.get('status') == 'Закрито':
+            for item in o.get('items', []):
+                name = item.get('name', 'Невідомо')
+                qty = int(item.get('qty', 1))
+                item_sales[name] = item_sales.get(name, 0) + qty
+                
+    # Сортуємо топ 10 страв
+    top_items = [{"name": k, "qty": v} for k, v in sorted(item_sales.items(), key=lambda x: x[1], reverse=True)[:10]]
+    
     return {
         'total_revenue': total_revenue,
         'active_orders': active_orders_count,
         'avg_rating': avg_rating,
-        'devices_online': len(active_devices)
+        'devices_online': len(active_devices),
+        'top_items': top_items
     }
 
 def handle_admin_init():
@@ -564,10 +580,10 @@ CUSTOMER_HTML = """
             let filtered = currentCategory === 'Всі' ? menuItems : menuItems.filter(i => i.category === currentCategory);
             if(filtered.length === 0) { grid.innerHTML = `<div class="col-span-2 text-center text-zinc-500 py-10 text-xs font-bold">Порожньо</div>`; return; }
 
-            // Повний розмір зображення без рамок (rounded-t-2xl)
+            // ТУТ КАРТИНКА У ПОВНОМУ РОЗМІРІ БЕЗ ОБРІЗАНЬ (object-contain bg-zinc-950)
             grid.innerHTML = filtered.map(item => {
                 const avail = item.available !== false;
-                const img = item.image ? `<img src="${item.image}" class="w-full h-32 object-contain bg-zinc-950 rounded-t-2xl" />` : ...
+                const img = item.image ? `<img src="${item.image}" class="w-full h-32 object-contain bg-zinc-950 rounded-t-2xl" />` : `<div class="w-full h-32 bg-zinc-900 flex items-center justify-center text-3xl rounded-t-2xl">🍽️</div>`;
                 return `
                     <div class="glass-card rounded-2xl flex flex-col justify-between overflow-hidden ${!avail ? 'opacity-40 grayscale' : ''}">
                         ${img}
@@ -709,6 +725,7 @@ ADMIN_HTML = """
     <title>Панель Керування Nexus Cafe</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         body { background-color: #09090b; color: #f4f4f5; font-family: system-ui, sans-serif; overflow-x: hidden; }
@@ -722,20 +739,23 @@ ADMIN_HTML = """
 
     <header class="mb-5 flex flex-col md:flex-row justify-between items-start md:items-center border-b border-zinc-800 pb-4 gap-4">
         <div>
-            <h1 class="text-xl md:text-2xl font-black text-indigo-500 tracking-tight">NEXUS CAFE <span class="text-white text-sm md:text-base font-normal">| Адмін-панель</span></h1>
+            <h1 class="text-xl md:text-2xl font-black text-indigo-500 tracking-tight">NEXUS CAFE <span class="text-white text-sm md:text-base font-normal">| Адмін</span></h1>
             <p class="text-[10px] md:text-xs text-zinc-500">Система інтерактивного моніторингу та обробки замовлень</p>
         </div>
         <div class="flex flex-wrap gap-2 items-center">
-            <button onclick="exportDatabase()" class="bg-zinc-900 border border-zinc-800 text-[10px] md:text-xs px-3 py-2 rounded-xl hover:bg-zinc-800 font-bold"><i class="fas fa-download mr-1"></i> Експорт БД</button>
-            <button onclick="clearDatabase()" class="bg-red-950/40 border border-red-800/60 text-red-400 text-[10px] md:text-xs px-3 py-2 rounded-xl hover:bg-red-900/40 font-bold">Очистити</button>
+            <button onclick="exportDatabase()" class="bg-zinc-900 border border-zinc-800 text-[10px] md:text-xs px-3 py-2 rounded-xl hover:bg-zinc-800 font-bold"><i class="fas fa-download mr-1"></i> Експорт</button>
+            <label class="bg-zinc-900 border border-zinc-800 text-[10px] md:text-xs px-3 py-2 rounded-xl hover:bg-zinc-800 font-bold cursor-pointer"><i class="fas fa-upload mr-1"></i> Імпорт <input type="file" id="import-file" onchange="importDatabase()" class="hidden"></label>
+            <button onclick="clearDatabase()" class="bg-red-950/40 border border-red-800/60 text-red-400 text-[10px] md:text-xs px-3 py-2 rounded-xl hover:bg-red-900/40 font-bold">Очистити БД</button>
             <a href="/logout" class="bg-zinc-800 hover:bg-zinc-700 text-[10px] md:text-xs px-3 py-2 rounded-xl font-bold">Вихід</a>
         </div>
     </header>
 
     <div class="flex gap-2 mb-6 bg-zinc-900 p-1.5 rounded-2xl border border-zinc-800/80 overflow-x-auto hide-scroll whitespace-nowrap">
-        <button onclick="switchTab('orders')" id="tab-orders" class="tab-btn active px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider border border-transparent transition-all"><i class="fas fa-utensils mr-1.5"></i> Замовлення (Drag)</button>
-        <button onclick="switchTab('menu')" id="tab-menu" class="tab-btn px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider text-zinc-400 border border-transparent transition-all"><i class="fas fa-book-open mr-1.5"></i> Меню Едітор</button>
-        <button onclick="switchTab('monitoring')" id="tab-monitoring" class="tab-btn px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider text-zinc-400 border border-transparent transition-all"><i class="fas fa-desktop mr-1.5"></i> Моніторинг</button>
+        <button onclick="switchTab('orders')" id="tab-orders" class="tab-btn active px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider border border-transparent transition-all"><i class="fas fa-utensils mr-1.5"></i> Замовлення</button>
+        <button onclick="switchTab('menu')" id="tab-menu" class="tab-btn px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider text-zinc-400 border border-transparent transition-all"><i class="fas fa-book-open mr-1.5"></i> Меню</button>
+        <button onclick="switchTab('monitoring')" id="tab-monitoring" class="tab-btn px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider text-zinc-400 border border-transparent transition-all"><i class="fas fa-desktop mr-1.5"></i> Екрани</button>
+        <button onclick="switchTab('map')" id="tab-map" class="tab-btn px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider text-zinc-400 border border-transparent transition-all"><i class="fas fa-map mr-1.5"></i> Карта</button>
+        <button onclick="switchTab('analytics')" id="tab-analytics" class="tab-btn px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider text-zinc-400 border border-transparent transition-all"><i class="fas fa-chart-pie mr-1.5"></i> Аналітика</button>
         <button onclick="switchTab('reviews')" id="tab-reviews" class="tab-btn px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider text-zinc-400 border border-transparent transition-all"><i class="fas fa-star mr-1.5"></i> Відгуки</button>
         <button onclick="switchTab('archive')" id="tab-archive" class="tab-btn px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider text-zinc-400 border border-transparent transition-all"><i class="fas fa-box-archive mr-1.5"></i> Архів</button>
     </div>
@@ -816,18 +836,49 @@ ADMIN_HTML = """
     </div>
 
     <div id="content-monitoring" class="tab-content hidden space-y-4">
-        <div class="flex justify-between items-center bg-zinc-900 p-4 rounded-xl border border-zinc-800">
-            <div>
-                <h2 class="text-lg font-black text-white">Моніторинг Столів</h2>
-                <p class="text-[10px] text-zinc-400 mt-0.5">Кількість столів для відображення у залі</p>
+        <h2 class="text-sm uppercase tracking-wider font-bold text-zinc-500"><i class="fas fa-desktop text-indigo-400 mr-2"></i> Екрани та дії клієнтів в реальному часі</h2>
+        <div id="devices-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <p class="text-zinc-500 text-xs">Немає підключених столів...</p>
+        </div>
+    </div>
+
+    <div id="content-map" class="tab-content hidden space-y-4">
+        <h2 class="text-sm uppercase tracking-wider font-bold text-zinc-500"><i class="fas fa-map text-indigo-400 mr-2"></i> Графічна інтерактивна карта мережі столів</h2>
+        <div class="admin-card rounded-2xl p-6 overflow-x-auto">
+            <canvas id="tableMapCanvas" width="900" height="420" class="bg-zinc-950 rounded-xl border border-zinc-800"></canvas>
+        </div>
+    </div>
+
+    <div id="content-analytics" class="tab-content hidden space-y-6">
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
+            <div class="admin-card rounded-2xl p-4 flex flex-col justify-center text-center">
+                <span class="text-[10px] text-zinc-500 uppercase font-black">Загальна Виручка</span>
+                <span id="stat-revenue" class="text-2xl font-black text-emerald-400 mt-1">0 ₴</span>
             </div>
-            <div class="flex items-center gap-3 bg-zinc-950 p-1.5 rounded-xl border border-zinc-800">
-                <button onclick="changeTablesCount(-1)" class="bg-zinc-900 w-8 h-8 rounded-lg font-black text-white border border-zinc-700">-</button>
-                <span id="tables-count-display" class="font-black text-sm text-indigo-400 w-6 text-center">12</span>
-                <button onclick="changeTablesCount(1)" class="bg-zinc-900 w-8 h-8 rounded-lg font-black text-white border border-zinc-700">+</button>
+            <div class="admin-card rounded-2xl p-4 flex flex-col justify-center text-center">
+                <span class="text-[10px] text-zinc-500 uppercase font-black">Активні Чеки</span>
+                <span id="stat-active" class="text-2xl font-black text-indigo-400 mt-1">0 шт</span>
+            </div>
+            <div class="admin-card rounded-2xl p-4 flex flex-col justify-center text-center">
+                <span class="text-[10px] text-zinc-500 uppercase font-black">Рейтинг закладу</span>
+                <span id="stat-rating" class="text-2xl font-black text-amber-400 mt-1">5.0</span>
+            </div>
+            <div class="admin-card rounded-2xl p-4 flex flex-col justify-center text-center">
+                <span class="text-[10px] text-zinc-500 uppercase font-black">Столи Онлайн</span>
+                <span id="stat-online" class="text-2xl font-black text-zinc-200 mt-1">0</span>
             </div>
         </div>
-        <div id="tables-grid-layout" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3"></div>
+        
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="admin-card p-5 rounded-2xl">
+                <h3 class="text-sm font-black uppercase text-indigo-400 mb-4 border-b border-zinc-800 pb-2">Популярні Страви (Графік)</h3>
+                <canvas id="salesChart" class="w-full max-h-[300px]"></canvas>
+            </div>
+            <div class="admin-card p-5 rounded-2xl">
+                <h3 class="text-sm font-black uppercase text-indigo-400 mb-4 border-b border-zinc-800 pb-2">Топ Продажів (Кількість)</h3>
+                <div id="top-sales-list" class="space-y-2"></div>
+            </div>
+        </div>
     </div>
 
     <div id="content-reviews" class="tab-content hidden space-y-4">
@@ -850,7 +901,7 @@ ADMIN_HTML = """
 
     <div id="review-orders-modal" class="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
         <div class="bg-zinc-950 border border-zinc-800 p-5 rounded-2xl w-full max-w-sm flex flex-col max-h-[80vh]">
-            <div class="flex justify-between items-center mb-3">
+            <div class="flex justify-between items-center mb-3 border-b border-zinc-800 pb-2">
                 <h3 class="text-sm font-black uppercase text-indigo-400" id="review-orders-title">Замовлення столу</h3>
                 <button onclick="closeReviewOrdersModal()" class="text-zinc-500 font-bold"><i class="fas fa-times"></i></button>
             </div>
@@ -858,13 +909,13 @@ ADMIN_HTML = """
         </div>
     </div>
 
-    <div id="nexus-global-modal" class="fixed inset-0 z-[999] bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
+    <div id="nexus-global-modal" class="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
         <div class="bg-zinc-950 border border-zinc-800 p-6 rounded-2xl w-full max-w-sm shadow-2xl space-y-4">
             <h3 id="nexus-modal-title" class="text-[11px] font-black uppercase tracking-widest text-indigo-400">Система</h3>
             <p id="nexus-modal-text" class="text-xs text-zinc-300 font-medium"></p>
             <div class="flex gap-3 pt-2">
                 <button id="nexus-btn-cancel" class="hidden flex-1 bg-zinc-900 border border-zinc-800 py-2.5 rounded-xl text-xs font-bold text-zinc-400">Скасувати</button>
-                <button id="nexus-btn-confirm" class="flex-1 bg-indigo-600 py-2.5 rounded-xl text-white text-xs font-bold shadow-lg">ОК</button>
+                <button id="nexus-btn-confirm" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white p-3 rounded-xl text-xs font-bold shadow-lg">ОК</button>
             </div>
         </div>
     </div>
@@ -904,6 +955,8 @@ ADMIN_HTML = """
             document.getElementById(`content-${tabId}`).classList.remove('hidden');
             const btn = document.getElementById(`tab-${tabId}`);
             btn.classList.add('active'); btn.classList.remove('text-zinc-400');
+
+            if (tabId === 'map') { drawTableMap(); }
         }
 
         // DRAG & DROP ДЛЯ ФОТО СТРАВ
@@ -960,6 +1013,7 @@ ADMIN_HTML = """
         const socket = io();
         let globalOrders = [], globalMenu = [], liveDevicesData = {};
         let adminCategoryFilter = 'Всі';
+        let salesChart = null;
 
         socket.on('connect', () => { socket.emit('join_admin_room'); });
 
@@ -967,7 +1021,7 @@ ADMIN_HTML = """
         socket.on('orders_sync', (orders) => { 
             globalOrders = orders; 
             renderOrders(orders); 
-            renderTablesGridLayout(); 
+            drawTableMap(); 
         });
         
         socket.on('menu_sync', (menu) => { 
@@ -981,8 +1035,64 @@ ADMIN_HTML = """
         
         socket.on('devices_sync', (devices) => { 
             liveDevicesData = devices;
-            renderTablesGridLayout(); 
+            renderDevices(); 
+            drawTableMap(); 
         });
+
+        socket.on('analytics_sync', (data) => {
+            document.getElementById('stat-revenue').innerText = `${data.total_revenue} ₴`;
+            document.getElementById('stat-active').innerText = `${data.active_orders} шт`;
+            document.getElementById('stat-rating').innerText = `${data.avg_rating}`;
+            document.getElementById('stat-online').innerText = `${data.devices_online}`;
+
+            const topList = document.getElementById('top-sales-list');
+            if (data.top_items && data.top_items.length > 0) {
+                topList.innerHTML = data.top_items.map((i, idx) => `
+                    <div class="flex justify-between items-center bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-xs">
+                        <div><span class="text-zinc-500 font-black mr-2">#${idx+1}</span><span class="text-zinc-200 font-bold">${i.name}</span></div>
+                        <span class="text-indigo-400 font-black bg-indigo-500/10 px-2 py-1 rounded-lg">${i.qty} шт</span>
+                    </div>`).join('');
+                    
+                updateChart(data.top_items);
+            } else {
+                topList.innerHTML = '<p class="text-zinc-500 text-xs">Немає закритих замовлень для формування статистики</p>';
+                if (salesChart) { salesChart.destroy(); salesChart = null; }
+            }
+        });
+
+        function updateChart(topItems) {
+            const ctx = document.getElementById('salesChart').getContext('2d');
+            const labels = topItems.map(i => i.name);
+            const data = topItems.map(i => i.qty);
+
+            if (salesChart) {
+                salesChart.data.labels = labels;
+                salesChart.data.datasets[0].data = data;
+                salesChart.update();
+            } else {
+                salesChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Продано порцій',
+                            data: data,
+                            backgroundColor: '#4f46e5',
+                            borderRadius: 6
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: { 
+                            y: { beginAtZero: true, grid: { color: '#27272a' } }, 
+                            x: { grid: { display: false } } 
+                        }
+                    }
+                });
+            }
+        }
 
         socket.on('new_order_alert', (order) => { showAlert(`Нове замовлення #${order.order_number}! Стіл: ${order.table}.`); });
         socket.on('waiter_alert', (data) => { showAlert(`🔔 Офіціанта викликають на Стіл #${data.table}`); });
@@ -1034,19 +1144,22 @@ ADMIN_HTML = """
         // РЕНДЕР МЕНЮ ЕДІТОРА (ІЗ ФІЛЬТРАМИ ТА FULL IMAGE)
         function renderCategoryFilter() {
             const bar = document.getElementById('admin-category-filter');
+            if(!bar) return;
             const cats = ['Всі', ...new Set(globalMenu.map(i => i.category))];
             bar.innerHTML = cats.map(c => `<button onclick="adminCategoryFilter='${c}'; renderMenuGrid();" class="px-3 py-1.5 rounded-lg text-[10px] font-black uppercase transition-all whitespace-nowrap ${adminCategoryFilter === c ? 'bg-indigo-600 text-white' : 'bg-zinc-900 text-zinc-400 border border-zinc-800'}">${c}</button>`).join('');
         }
 
         function renderMenuGrid() {
             const grid = document.getElementById('admin-menu-grid');
+            if(!grid) return;
             let filtered = adminCategoryFilter === 'Всі' ? globalMenu : globalMenu.filter(i => i.category === adminCategoryFilter);
             
             if(filtered.length === 0) { grid.innerHTML = `<div class="col-span-3 text-center text-zinc-500 py-6 text-xs font-bold">Немає страв</div>`; return; }
 
+            // ЗОБРАЖЕННЯ В ПОВНОМУ РОЗМІРІ ТУТ (object-contain bg-zinc-950)
             grid.innerHTML = filtered.map(item => `
                 <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden flex flex-col justify-between">
-                   ${item.image ? `<img src="${item.image}" class="w-full h-24 object-contain bg-zinc-950 border-b border-zinc-800">` : ...}
+                    ${item.image ? `<img src="${item.image}" class="w-full h-24 object-contain bg-zinc-950 border-b border-zinc-800">` : `<div class="w-full h-24 bg-zinc-950 flex items-center justify-center text-xl border-b border-zinc-800">🍽️</div>`}
                     <div class="p-2 flex-1 flex flex-col justify-between">
                         <div>
                             <h4 class="font-black text-[11px] text-zinc-200 line-clamp-1">${item.name}</h4>
@@ -1095,52 +1208,117 @@ ADMIN_HTML = """
             document.getElementById('menu-form').reset(); 
             document.getElementById('menu-id').value = ''; 
             const ind = document.getElementById('file-name-indicator');
-            if(ind) { ind.innerText = 'Файл не обрано'; ind.className = 'text-[10px] text-zinc-600 truncate max-w-[200px]'; document.getElementById('drop-icon').className = "fas fa-cloud-upload-alt text-lg text-zinc-500"; }
+            if(ind) { ind.innerText = 'Файл не обрано'; ind.className = 'text-[9px] text-zinc-600 truncate max-w-[200px]'; document.getElementById('drop-icon').className = "fas fa-cloud-upload-alt text-lg text-zinc-500"; }
         }
 
-        // РЕНДЕР СТОЛІВ МОНІТОРИНГУ (ГРІД КНОПКИ +/-)
-        function renderTablesGridLayout() {
-            if (currentTab !== 'monitoring') return;
-            let tablesCount = parseInt(localStorage.getItem('nexus_tables_count') || '12');
-            document.getElementById('tables-count-display').innerText = tablesCount;
-            
-            const grid = document.getElementById('tables-grid-layout');
-            let html = '';
-            
-            for(let i = 1; i <= tablesCount; i++) {
-                let isOnline = false, cartTotal = 0, section = 'Всі';
+        // РЕНДЕР МОНІТОРИНГУ 
+        function renderDevices() {
+            const container = document.getElementById('devices-container');
+            if(!container) return;
+            const keys = Object.keys(liveDevicesData);
+            if(keys.length === 0) {
+                container.innerHTML = `<div class="col-span-4 text-center text-zinc-500 py-12 font-bold text-xs">Немає активних підключень</div>`;
+                return;
+            }
+            container.innerHTML = keys.map(uuid => {
+                const dev = liveDevicesData[uuid];
+                return `
+                    <div class="admin-card p-4 rounded-2xl flex flex-col justify-between border-l-4 border-l-emerald-500">
+                        <div>
+                            <div class="flex justify-between items-center mb-2">
+                                <span class="bg-zinc-950 text-emerald-400 border border-zinc-800 px-2.5 py-1 rounded-xl text-xs font-black">Стіл #${dev.table}</span>
+                                <span class="text-[10px] text-zinc-500 font-bold">Останній кадр: ${dev.last_seen}</span>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2 text-[11px] mb-3 bg-zinc-950 p-2.5 rounded-xl border border-zinc-900 font-medium">
+                                <div class="text-zinc-400">Розділ: <b class="text-zinc-200">${dev.category}</b></div>
+                                <div class="text-zinc-400">Кошик: <b class="text-indigo-400">${dev.cart_total} ₴</b></div>
+                                <div class="text-zinc-400">Вікно: <b class="text-amber-500">${dev.modal}</b></div>
+                                <div class="text-zinc-400">Скролл: <b class="text-zinc-200">${dev.scroll}%</b></div>
+                            </div>
+                            <div class="w-full h-40 bg-black rounded-xl overflow-hidden border border-zinc-800 relative">
+                                <div id="placeholder-${uuid}" class="absolute text-[10px] text-zinc-600 font-bold flex flex-col items-center gap-2 inset-0 justify-center">
+                                    <i class="fas fa-spinner fa-spin text-sm text-indigo-500"></i> Трансляція...
+                                </div>
+                                <img id="stream-${uuid}" class="w-full h-full object-contain hidden relative z-10" src="" alt="STREAM">
+                            </div>
+                        </div>
+                    </div>`;
+            }).join('');
+        }
+
+        // КАРТА СТОЛІВ (CANVAS)
+        function drawTableMap() {
+            const canvas = document.getElementById('tableMapCanvas');
+            if(!canvas) return;
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const totalTables = 15; // 15 столів для прикладу
+            const cols = 5;
+            const radius = 30;
+            const startX = 80;
+            const startY = 60;
+            const spaceX = 160;
+            const spaceY = 110;
+
+            for(let i=1; i<=totalTables; i++) {
+                const row = Math.floor((i-1) / cols);
+                const col = (i-1) % cols;
+                const x = startX + col * spaceX;
+                const y = startY + row * spaceY;
+
+                let isOnline = false;
+                let hasCart = false;
+                let isReady = false;
+
                 Object.values(liveDevicesData).forEach(d => {
-                    if(String(d.table) === String(i)) { isOnline = true; cartTotal = d.cart_total; section = d.category || 'Всі'; }
+                    if(String(d.table) === String(i)) {
+                        isOnline = true;
+                        if(d.cart_total > 0) hasCart = true;
+                    }
                 });
                 
-                let bgClass = 'bg-zinc-900 border-zinc-800 opacity-60';
-                let st = '<span class="text-[8px] uppercase font-bold text-zinc-500">Вільний</span>';
-                if(isOnline) {
-                    if(cartTotal > 0) { bgClass = 'bg-amber-950/20 border-amber-500/40 shadow-lg shadow-amber-500/5'; st = `<span class="text-[8px] uppercase font-bold text-amber-400">Вибір (${cartTotal}₴)</span>`; }
-                    else { bgClass = 'bg-emerald-950/20 border-emerald-500/40 shadow-lg shadow-emerald-500/5'; st = `<span class="text-[8px] uppercase font-bold text-emerald-400">Онлайн</span>`; }
+                globalOrders.forEach(o => {
+                    if(o.status !== 'Закрито' && String(o.table) === String(i)) {
+                        if(o.status === 'ready') isReady = true;
+                    }
+                });
+
+                ctx.beginPath();
+                ctx.arc(x, y, radius, 0, 2 * Math.PI);
+                
+                if (isReady) {
+                    ctx.shadowBlur = 15; ctx.shadowColor = '#10b981'; ctx.fillStyle = 'rgba(16, 185, 129, 0.2)'; ctx.strokeStyle = '#10b981';
+                } else if (hasCart) {
+                    ctx.shadowBlur = 15; ctx.shadowColor = '#f59e0b'; ctx.fillStyle = 'rgba(245, 158, 11, 0.2)'; ctx.strokeStyle = '#f59e0b';
+                } else if (isOnline) {
+                    ctx.shadowBlur = 15; ctx.shadowColor = '#4f46e5'; ctx.fillStyle = 'rgba(79, 70, 229, 0.2)'; ctx.strokeStyle = '#4f46e5';
+                } else {
+                    ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(39, 39, 42, 0.6)'; ctx.strokeStyle = '#52525b';
                 }
                 
-                html += `
-                    <div class="p-3 rounded-xl border flex flex-col justify-between h-20 ${bgClass} transition-all">
-                        <div class="flex justify-between items-start">
-                            <span class="font-black text-xs text-white">#${i}</span>
-                            ${st}
-                        </div>
-                        ${isOnline ? `<div class="text-[9px] text-zinc-400 font-bold truncate">${section}</div>` : ''}
-                    </div>`;
+                ctx.lineWidth = 2;
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.shadowBlur = 0;
+                ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 12px system-ui';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(`${i}`, x, y);
+
+                ctx.font = '9px system-ui';
+                ctx.fillStyle = isReady ? '#10b981' : (hasCart ? '#f59e0b' : (isOnline ? '#818cf8' : '#a1a1aa'));
+                let statusText = 'Вільний';
+                if(isReady) statusText = 'ГОТОВО';
+                else if(hasCart) statusText = 'ВИБИРАЄ';
+                else if(isOnline) statusText = 'ОНЛАЙН';
+                ctx.fillText(statusText, x, y + 45);
             }
-            grid.innerHTML = html;
         }
 
-        function changeTablesCount(delta) {
-            let tablesCount = parseInt(localStorage.getItem('nexus_tables_count') || '12');
-            tablesCount += delta;
-            if(tablesCount < 1) tablesCount = 1;
-            localStorage.setItem('nexus_tables_count', tablesCount);
-            renderTablesGridLayout();
-        }
-
-        // РЕНДЕР ВІДГУКІВ ІЗ КНОПКОЮ ЗАМОВЛЕНЬ
+        // РЕНДЕР ВІДГУКІВ
         function renderReviews(reviews) {
             const container = document.getElementById('admin-reviews-list');
             if(reviews.length === 0) { container.innerHTML = `<div class="col-span-3 text-center text-zinc-500 py-6 text-xs font-bold">Немає відгуків</div>`; return; }
@@ -1157,12 +1335,14 @@ ADMIN_HTML = """
                             <p class="text-[11px] text-zinc-300 font-medium leading-relaxed bg-black/30 p-2 rounded-lg">${r.text || 'Оцінка без коментаря'}</p>
                         </div>
                         <div class="mt-3 pt-2 border-t border-zinc-800/60 flex justify-between items-center">
-                            <button onclick="viewTableOrders('${r.name}')" class="text-[9px] font-black uppercase tracking-widest text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded hover:bg-indigo-500/20"><i class="fas fa-list-ul mr-1"></i> Дивитись замовлення</button>
+                            <button onclick="viewTableOrders('${r.name}')" class="text-[9px] font-black uppercase tracking-widest text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded hover:bg-indigo-500/20"><i class="fas fa-list-ul mr-1"></i> Замовлення</button>
                             <button onclick="deleteReview('${r._id}')" class="text-red-500 hover:text-red-400 text-[10px]"><i class="fas fa-trash"></i></button>
                         </div>
                     </div>`;
             }).join('');
         }
+
+        function deleteReview(id) { if(confirm('Видалити цей відгук?')) socket.emit('reviews_delete', { id: id }); }
 
         function viewTableOrders(reviewerName) {
             const match = reviewerName.match(/Стіл\s*#\s*(\w+)/);
@@ -1192,18 +1372,17 @@ ADMIN_HTML = """
         }
         function closeReviewOrdersModal() { document.getElementById('review-orders-modal').classList.add('hidden'); document.getElementById('review-orders-modal').classList.remove('flex'); }
 
-        // РЕНДЕР АРХІВУ (ОПЛАЧЕНІ ЧЕКИ ТА ПРИСТРОЇ)
+        // РЕНДЕР АРХІВУ
         function renderArchive(data) {
             const oList = document.getElementById('archive-orders-list');
             const dList = document.getElementById('archive-devices-list');
-            if(oList) oList.innerHTML = data.orders.filter(o=>o.status==='Закрито').map(o => `<div class="bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-[10px]"><div class="flex justify-between font-bold border-b border-zinc-800 pb-1 mb-1"><span class="text-emerald-400">#${o.order_number} (Стіл ${o.table})</span><span class="text-zinc-500">${o.time_str}</span></div><div class="text-zinc-400">${o.items.map(i=>`• ${i.name} x${i.qty}`).join('<br>')}</div><div class="text-right font-black text-zinc-300 mt-1">${o.total_price} ₴</div></div>`).join('') || '<p class="text-zinc-500 text-[10px]">Немає оплачених замовлень</p>';
+            if(oList) oList.innerHTML = data.orders.map(o => `<div class="bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-[10px]"><div class="flex justify-between font-bold border-b border-zinc-800 pb-1 mb-1"><span class="text-emerald-400">#${o.order_number} (Стіл ${o.table})</span><span class="text-zinc-500">${o.time_str}</span></div><div class="text-zinc-400">${o.items.map(i=>`• ${i.name} x${i.qty}`).join('<br>')}</div><div class="text-right font-black text-zinc-300 mt-1">${o.total_price} ₴</div></div>`).join('') || '<p class="text-zinc-500 text-[10px]">Немає оплачених замовлень</p>';
             if(dList) dList.innerHTML = data.devices.map(d => `<div class="bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-[10px]"><div class="flex justify-between font-bold mb-1"><span class="text-indigo-400">Стіл ${d.table}</span><span class="text-zinc-500">${d.last_seen}</span></div><div class="bg-black/40 p-1.5 rounded font-mono text-[9px] text-zinc-400 break-all leading-tight">${d.user_agent}</div></div>`).join('') || '<p class="text-zinc-500 text-[10px]">Історія пристроїв порожня</p>';
         }
 
         function updateOrderStatus(id, status) { socket.emit('order_status_update', { id, status }); }
         function deleteOrder(id) { showConfirm('Видалити замовлення?', () => { socket.emit('order_delete', { id }); }); }
         function deleteMenuItem(id) { showConfirm('Видалити страву з меню?', () => { socket.emit('menu_delete', { id }); }); }
-        function deleteReview(id) { showConfirm('Видалити відгук?', () => { socket.emit('reviews_delete', { id }); }); }
         function clearDatabase() { showConfirm('Повністю очистити всю базу даних?', () => { socket.emit('admin_clear_db'); }); }
         function exportDatabase() { window.location.href = '/export_db'; }
         
@@ -1219,17 +1398,6 @@ ADMIN_HTML = """
                 } catch(err) { showAlert('Помилка структури JSON.'); }
             };
             reader.readAsText(fileInput.files[0]);
-        }
-
-        function playAlertSound() {
-            try {
-                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
-                osc.type = 'sine'; osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); 
-                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
-                osc.connect(gain); gain.connect(audioCtx.destination);
-                osc.start(); osc.stop(audioCtx.currentTime + 0.3);
-            } catch(e) {}
         }
 
         function escapeHtml(str) { if(!str) return ''; return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); }
