@@ -1242,7 +1242,7 @@ ADMIN_HTML = """
             }
         }
 
-        socket.on('new_order_alert', (order) => { showAlert(`Нове замовлення #${order.order_number}! Стіл: ${order.table}.`); });
+        socket.on('new_order_alert', (order) => { /* showAlert(`Нове замовлення #${order.order_number}! Стіл: ${order.table}.`); */  });
         socket.on('waiter_alert', (data) => { showAlert(`🔔 Офіціанта викликають на Стіл #${data.table}`); });
 
         // РЕНДЕР КАНБАН ДОШКИ ЗАМОВЛЕНЬ
