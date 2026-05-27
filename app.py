@@ -75,7 +75,6 @@ def calculate_dashboard_stats():
     if reviews:
         avg_rating = round(sum(int(r.get('rating', 5)) for r in reviews) / len(reviews), 1)
         
-    # Статистика проданих страв (беремо тільки закриті/оплачені замовлення)
     item_sales = {}
     for o in orders:
         if o.get('status') == 'Закрито':
@@ -84,7 +83,6 @@ def calculate_dashboard_stats():
                 qty = int(item.get('qty', 1))
                 item_sales[name] = item_sales.get(name, 0) + qty
                 
-    # Сортуємо топ 10 страв
     top_items = [{"name": k, "qty": v} for k, v in sorted(item_sales.items(), key=lambda x: x[1], reverse=True)[:10]]
     
     return {
@@ -401,20 +399,68 @@ CUSTOMER_HTML = """
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        body { background-color: #09090b; color: #f4f4f5; font-family: system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
+        /* CSS Variables для тем */
+        :root {
+            --bg-base: #09090b;
+            --bg-panel: #18181b;
+            --bg-header: rgba(9, 9, 11, 0.95);
+            --border-color: #27272a;
+            --text-base: #f4f4f5;
+            --text-muted: #a1a1aa;
+            --accent: #4f46e5;
+        }
+        [data-theme="light"] {
+            --bg-base: #f8fafc;
+            --bg-panel: #ffffff;
+            --bg-header: rgba(248, 250, 252, 0.95);
+            --border-color: #e2e8f0;
+            --text-base: #0f172a;
+            --text-muted: #64748b;
+            --accent: #2563eb;
+        }
+        [data-theme="wood"] {
+            --bg-base: #292524;
+            --bg-panel: #44403c;
+            --bg-header: rgba(41, 37, 36, 0.95);
+            --border-color: #57534e;
+            --text-base: #fef3c7;
+            --text-muted: #d6d3d1;
+            --accent: #d97706;
+        }
+        [data-theme="sakura"] {
+            --bg-base: #2e1065;
+            --bg-panel: #4c1d95;
+            --bg-header: rgba(46, 16, 101, 0.95);
+            --border-color: #6d28d9;
+            --text-base: #fdf4ff;
+            --text-muted: #d8b4fe;
+            --accent: #ec4899;
+        }
+
+        /* Плавні переходи та застосування змінних */
+        body { background-color: var(--bg-base) !important; color: var(--text-base) !important; transition: all 0.5s ease; font-family: system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
+        .bg-zinc-950, .bg-zinc-900, .glass-card { background-color: var(--bg-panel) !important; transition: all 0.5s ease; }
+        header { background-color: var(--bg-header) !important; transition: all 0.5s ease; }
+        .border-zinc-800, .border-zinc-900 { border-color: var(--border-color) !important; transition: all 0.5s ease; }
+        .text-zinc-100, .text-zinc-200, .text-zinc-300 { color: var(--text-base) !important; transition: all 0.5s ease; }
+        .text-zinc-400, .text-zinc-500, .text-zinc-600 { color: var(--text-muted) !important; transition: all 0.5s ease; }
+        .bg-indigo-600 { background-color: var(--accent) !important; transition: all 0.5s ease; color: #ffffff !important; }
+        .text-indigo-400, .text-indigo-500 { color: var(--accent) !important; transition: all 0.5s ease; }
+        .border-indigo-500, .border-indigo-500\\/20, .border-indigo-500\\/30 { border-color: var(--accent) !important; transition: all 0.5s ease; }
+
         .hide-scroll::-webkit-scrollbar { display: none; }
-        .glass-card { background: linear-gradient(145deg, #18181b 0%, #0f0f11 100%); border: 1px solid #27272a; }
-        .glass-card:hover { border-color: #4f46e5; box-shadow: 0 0 15px rgba(79, 70, 229, 0.15); }
+        .glass-card { border: 1px solid var(--border-color); }
+        .glass-card:hover { border-color: var(--accent); box-shadow: 0 0 15px rgba(0,0,0,0.1); }
     </style>
 </head>
-<body class="pb-28 relative antialiased">
+<body class="pb-28 relative antialiased" data-theme="dark">
 
-    <div id="toast-box" class="fixed top-4 left-3 right-3 z-50 hidden bg-zinc-900/95 backdrop-blur-md border border-zinc-800 p-3.5 rounded-2xl shadow-2xl items-center gap-3 transition-all duration-300">
+    <div id="toast-box" class="fixed top-4 left-3 right-3 z-50 hidden bg-zinc-900 border border-zinc-800 p-3.5 rounded-2xl shadow-2xl items-center gap-3 transition-all duration-300">
         <i class="fas fa-info-circle text-indigo-500 text-lg"></i>
         <p id="toast-text" class="text-xs font-bold text-zinc-200 leading-tight"></p>
     </div>
 
-    <header class="fixed top-0 left-0 right-0 bg-zinc-950/90 backdrop-blur-md border-b border-zinc-800/80 z-40 p-3 flex justify-between items-center">
+    <header class="fixed top-0 left-0 right-0 z-40 p-3 flex justify-between items-center border-b border-zinc-800">
         <div class="flex items-center gap-2.5">
             <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center font-black text-white shadow-lg text-sm">#{{ table_id }}</div>
             <div>
@@ -445,24 +491,42 @@ CUSTOMER_HTML = """
     <main class="pt-20 px-3">
         <div class="flex justify-between items-center mb-3 mt-2">
             <h1 class="text-xl font-black tracking-tight">NEXUS <span class="text-indigo-500">CAFE</span></h1>
-            <button onclick="openMyOrdersModal()" class="text-[11px] font-bold text-indigo-400 bg-indigo-500/10 px-3 py-2 rounded-xl border border-indigo-500/20 flex items-center gap-1.5 active:scale-95">
-                <i class="fas fa-receipt"></i> Мої чеки
-            </button>
+            <div class="flex items-center gap-2">
+                <button id="theme-toggle-btn" class="w-8 h-8 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 active:scale-90 transition-transform shadow-md">
+                    <i class="fas fa-palette"></i>
+                </button>
+                <button onclick="openMyOrdersModal()" class="text-[11px] font-bold text-indigo-400 bg-indigo-500/10 px-3 py-2 rounded-xl border border-indigo-500/20 flex items-center gap-1.5 active:scale-95 transition-all">
+                    <i class="fas fa-receipt"></i> Мої чеки
+                </button>
+            </div>
         </div>
         
-        <div class="flex space-x-2 overflow-x-auto hide-scroll py-2 mb-3 sticky top-[64px] z-30 bg-[#09090b]/95 backdrop-blur-md -mx-3 px-3 border-b border-zinc-900" id="category-bar"></div>
+        <div class="flex space-x-2 overflow-x-auto hide-scroll py-2 mb-3 sticky top-[64px] z-30 bg-zinc-950/90 backdrop-blur-md -mx-3 px-3 border-b border-zinc-900" id="category-bar"></div>
         
         <div class="grid grid-cols-2 gap-3" id="menu-grid"></div>
     </main>
 
-    <div id="float-cart-bar" class="fixed bottom-0 left-0 right-0 p-3 z-40 bg-gradient-to-t from-[#09090b] via-[#09090b]/95 to-transparent hidden">
+    <div id="float-cart-bar" class="fixed bottom-0 left-0 right-0 p-3 z-40 bg-zinc-950/95 backdrop-blur-md hidden border-t border-zinc-900">
         <button onclick="openModal('cart-modal')" class="w-full bg-indigo-600 active:bg-indigo-500 text-white p-3.5 rounded-2xl shadow-xl flex justify-between items-center border border-indigo-500/30 transition-all">
             <div class="flex items-center gap-2.5">
-                <span id="float-cart-count" class="bg-indigo-800 px-2.5 py-1 rounded-lg font-black text-[11px] min-w-[24px] text-center">0</span>
+                <span id="float-cart-count" class="bg-black/20 px-2.5 py-1 rounded-lg font-black text-[11px] min-w-[24px] text-center">0</span>
                 <span class="text-[11px] font-black uppercase tracking-widest">До кошика</span>
             </div>
-            <span class="text-sm font-black bg-indigo-700/60 px-3 py-1.5 rounded-xl"><span id="float-cart-total">0</span> ₴</span>
+            <span class="text-sm font-black bg-black/20 px-3 py-1.5 rounded-xl"><span id="float-cart-total">0</span> ₴</span>
         </button>
+    </div>
+
+    <div id="theme-menu-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
+        <div class="bg-zinc-950 border border-zinc-800 p-5 rounded-2xl w-full max-w-xs space-y-4 shadow-2xl">
+            <h3 class="text-sm font-black text-center text-indigo-400 uppercase tracking-widest">Оберіть тему</h3>
+            <div class="grid grid-cols-2 gap-3">
+                <button onclick="setTheme('dark')" class="p-3 rounded-xl bg-[#09090b] border border-[#27272a] text-[#f4f4f5] font-bold text-xs flex flex-col items-center gap-2 transition-all active:scale-95"><div class="w-6 h-6 rounded-full bg-[#4f46e5]"></div>Кіберпанк</button>
+                <button onclick="setTheme('light')" class="p-3 rounded-xl bg-[#f8fafc] border border-[#e2e8f0] text-[#0f172a] font-bold text-xs flex flex-col items-center gap-2 transition-all active:scale-95"><div class="w-6 h-6 rounded-full bg-[#2563eb]"></div>Світла</button>
+                <button onclick="setTheme('wood')" class="p-3 rounded-xl bg-[#292524] border border-[#57534e] text-[#fef3c7] font-bold text-xs flex flex-col items-center gap-2 transition-all active:scale-95"><div class="w-6 h-6 rounded-full bg-[#d97706]"></div>Дерево</button>
+                <button onclick="setTheme('sakura')" class="p-3 rounded-xl bg-[#2e1065] border border-[#6d28d9] text-[#fdf4ff] font-bold text-xs flex flex-col items-center gap-2 transition-all active:scale-95"><div class="w-6 h-6 rounded-full bg-[#ec4899]"></div>Сакура</button>
+            </div>
+            <button onclick="closeModal('theme-menu-modal')" class="w-full bg-zinc-900 border border-zinc-800 py-3 rounded-xl text-xs font-bold text-zinc-400 mt-2 active:scale-95">Закрити</button>
+        </div>
     </div>
 
     <div id="cart-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex-col justify-end">
@@ -529,6 +593,43 @@ CUSTOMER_HTML = """
         let savedCart = localStorage.getItem(`nexus_cart_${tableId}_${clientUUID}`);
         if(savedCart) cart = JSON.parse(savedCart);
 
+        // --- ЛОГІКА ТЕМ ОФОРМЛЕННЯ (LONG PRESS) ---
+        let themePressTimer;
+        const themeBtn = document.getElementById('theme-toggle-btn');
+        const themeModal = 'theme-menu-modal';
+
+        themeBtn.addEventListener('mousedown', startThemePress);
+        themeBtn.addEventListener('touchstart', startThemePress, {passive: true});
+        themeBtn.addEventListener('mouseup', endThemePress);
+        themeBtn.addEventListener('touchend', endThemePress);
+        themeBtn.addEventListener('mouseleave', cancelThemePress);
+
+        function startThemePress(e) {
+            themePressTimer = setTimeout(() => {
+                themePressTimer = null;
+                openModal(themeModal);
+            }, 500); // 500ms long press
+        }
+
+        function endThemePress(e) {
+            if (themePressTimer) {
+                clearTimeout(themePressTimer);
+                themePressTimer = null;
+                // Звичайний короткий клік - перемикаємо між dark і light
+                let current = document.body.getAttribute('data-theme');
+                setTheme(current === 'light' ? 'dark' : 'light');
+            }
+        }
+        function cancelThemePress() { if (themePressTimer) { clearTimeout(themePressTimer); themePressTimer = null; } }
+
+        function setTheme(theme) {
+            document.body.setAttribute('data-theme', theme);
+            localStorage.setItem('nexus_theme', theme);
+            closeModal(themeModal);
+        }
+        setTheme(localStorage.getItem('nexus_theme') || 'dark');
+        // -------------------------------------------
+
         socket.on('connect', () => {
             socket.emit('client_init', { uuid: clientUUID, table: tableId, user_agent: navigator.userAgent });
             sendLiveTelemetry();
@@ -570,7 +671,7 @@ CUSTOMER_HTML = """
         function renderCategories() {
             const bar = document.getElementById('category-bar');
             const cats = ['Всі', ...new Set(menuItems.map(i => i.category))];
-            bar.innerHTML = cats.map(c => `<button onclick="setCategory('${c}')" class="px-3 py-2 rounded-xl whitespace-nowrap font-black text-[11px] uppercase tracking-wider transition-all ${currentCategory === c ? 'bg-indigo-600 text-white shadow-md' : 'bg-zinc-900 text-zinc-400 border border-zinc-800'}">${c}</button>`).join('');
+            bar.innerHTML = cats.map(c => `<button onclick="setCategory('${c}')" class="px-3 py-2 rounded-xl whitespace-nowrap font-black text-[11px] uppercase tracking-wider transition-all ${currentCategory === c ? 'bg-indigo-600 text-white shadow-md border-transparent' : 'bg-zinc-900 text-zinc-400 border-zinc-800'} border">${c}</button>`).join('');
         }
 
         function setCategory(cat) { currentCategory = cat; renderCategories(); renderMenu(); sendLiveTelemetry(); }
@@ -580,7 +681,7 @@ CUSTOMER_HTML = """
             let filtered = currentCategory === 'Всі' ? menuItems : menuItems.filter(i => i.category === currentCategory);
             if(filtered.length === 0) { grid.innerHTML = `<div class="col-span-2 text-center text-zinc-500 py-10 text-xs font-bold">Порожньо</div>`; return; }
 
-            // ТУТ КАРТИНКА У ПОВНОМУ РОЗМІРІ БЕЗ ОБРІЗАНЬ (object-contain bg-zinc-950)
+            // ЗОБРАЖЕННЯ У ПОВНОМУ РОЗМІРІ БЕЗ ОБРІЗАНЬ (object-contain bg-zinc-950)
             grid.innerHTML = filtered.map(item => {
                 const avail = item.available !== false;
                 const img = item.image ? `<img src="${item.image}" class="w-full h-32 object-contain bg-zinc-950 rounded-t-2xl" />` : `<div class="w-full h-32 bg-zinc-900 flex items-center justify-center text-3xl rounded-t-2xl">🍽️</div>`;
@@ -611,7 +712,7 @@ CUSTOMER_HTML = """
                 if(item) {
                     totalCount += cart[id]; totalPrice += item.price * cart[id];
                     html += `
-                        <div class="flex items-center justify-between bg-zinc-900/60 p-2.5 rounded-xl border border-zinc-800/80">
+                        <div class="flex items-center justify-between bg-zinc-900 p-2.5 rounded-xl border border-zinc-800">
                             <div class="flex-1 min-w-0 pr-2">
                                 <h4 class="font-bold text-[11px] text-zinc-200 truncate">${item.name}</h4>
                                 <p class="text-[10px] text-indigo-400 font-bold mt-0.5">${item.price} ₴</p>
@@ -675,14 +776,14 @@ CUSTOMER_HTML = """
             socket.emit('get_my_orders_data', { uuid: clientUUID, numbers: myOrdersNums, table: tableId }, (orders) => {
                 if(!orders || orders.length === 0) { list.innerHTML = `<div class="text-center text-zinc-500 py-6 text-[11px] font-bold">У вас ще немає замовлень</div>`; return; }
                 list.innerHTML = orders.map(o => {
-                    let statusColor = 'text-amber-500 bg-amber-500/10 border-amber-500/20'; let statusTxt = 'Нове';
-                    if(o.status === 'cooking') { statusColor = 'text-indigo-400 bg-indigo-500/10 border-indigo-500/20'; statusTxt = 'Готується'; }
-                    if(o.status === 'ready') { statusColor = 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'; statusTxt = 'Готово'; }
-                    if(o.status === 'Закрито') { statusColor = 'text-zinc-500 bg-zinc-900 border-zinc-800'; statusTxt = 'Закрито'; }
+                    let statusColor = 'text-amber-500 border-amber-500/20'; let statusTxt = 'Нове';
+                    if(o.status === 'cooking') { statusColor = 'text-indigo-400 border-indigo-500/20'; statusTxt = 'Готується'; }
+                    if(o.status === 'ready') { statusColor = 'text-emerald-400 border-emerald-500/20'; statusTxt = 'Готово'; }
+                    if(o.status === 'Закрито') { statusColor = 'text-zinc-500 border-zinc-800'; statusTxt = 'Закрито'; }
                     const itemsStr = o.items.map(i => `<div class="flex justify-between"><span>${i.name} x${i.qty}</span><span>${i.price * i.qty} ₴</span></div>`).join('');
                     return `
-                        <div class="bg-zinc-900/80 border border-zinc-800 p-3.5 rounded-xl space-y-2">
-                            <div class="flex justify-between items-center border-b border-zinc-800/80 pb-1.5">
+                        <div class="bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl space-y-2">
+                            <div class="flex justify-between items-center border-b border-zinc-800 pb-1.5">
                                 <span class="font-black text-[11px] text-zinc-200">Чек #${o.order_number}</span>
                                 <span class="text-[9px] font-bold px-1.5 py-0.5 rounded border ${statusColor}">${statusTxt}</span>
                             </div>
@@ -733,6 +834,8 @@ ADMIN_HTML = """
         .tab-btn.active { background-color: #4f46e5 !important; color: white !important; border-color: #6366f1 !important; }
         .drag-over { border-color: #4f46e5 !important; background-color: rgba(79, 70, 229, 0.05); }
         .hide-scroll::-webkit-scrollbar { display: none; }
+        .draggable-window { position: fixed; z-index: 100; }
+        .drag-header { cursor: move; }
     </style>
 </head>
 <body class="p-4 md:p-6">
@@ -836,14 +939,32 @@ ADMIN_HTML = """
     </div>
 
     <div id="content-monitoring" class="tab-content hidden space-y-4">
-        <h2 class="text-sm uppercase tracking-wider font-bold text-zinc-500"><i class="fas fa-desktop text-indigo-400 mr-2"></i> Екрани та дії клієнтів в реальному часі</h2>
-        <div id="devices-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            <p class="text-zinc-500 text-xs">Немає підключених столів...</p>
+        <div class="flex justify-between items-center bg-zinc-900 p-4 rounded-xl border border-zinc-800">
+            <div>
+                <h2 class="text-lg font-black text-white">Живі екрани клієнтів</h2>
+                <p class="text-[10px] text-zinc-400 mt-0.5">Кількість столів (разом із Canvas-картою)</p>
+            </div>
+            <div class="flex items-center gap-3 bg-zinc-950 p-1.5 rounded-xl border border-zinc-800">
+                <button onclick="changeTablesCount(-1)" class="bg-zinc-900 w-8 h-8 rounded-lg font-black text-white border border-zinc-700">-</button>
+                <span id="tables-count-display-monitor" class="font-black text-sm text-indigo-400 w-6 text-center">12</span>
+                <button onclick="changeTablesCount(1)" class="bg-zinc-900 w-8 h-8 rounded-lg font-black text-white border border-zinc-700">+</button>
+            </div>
         </div>
+        <div id="devices-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
     </div>
 
     <div id="content-map" class="tab-content hidden space-y-4">
-        <h2 class="text-sm uppercase tracking-wider font-bold text-zinc-500"><i class="fas fa-map text-indigo-400 mr-2"></i> Графічна інтерактивна карта мережі столів</h2>
+        <div class="flex justify-between items-center bg-zinc-900 p-4 rounded-xl border border-zinc-800">
+            <div>
+                <h2 class="text-lg font-black text-white">Карта залу (Canvas)</h2>
+                <p class="text-[10px] text-zinc-400 mt-0.5">Візуалізація зайнятих та вільних столів</p>
+            </div>
+            <div class="flex items-center gap-3 bg-zinc-950 p-1.5 rounded-xl border border-zinc-800">
+                <button onclick="changeTablesCount(-1)" class="bg-zinc-900 w-8 h-8 rounded-lg font-black text-white border border-zinc-700">-</button>
+                <span id="tables-count-display-map" class="font-black text-sm text-indigo-400 w-6 text-center">12</span>
+                <button onclick="changeTablesCount(1)" class="bg-zinc-900 w-8 h-8 rounded-lg font-black text-white border border-zinc-700">+</button>
+            </div>
+        </div>
         <div class="admin-card rounded-2xl p-6 overflow-x-auto">
             <canvas id="tableMapCanvas" width="900" height="420" class="bg-zinc-950 rounded-xl border border-zinc-800"></canvas>
         </div>
@@ -909,6 +1030,20 @@ ADMIN_HTML = """
         </div>
     </div>
 
+    <div id="floating-stream-window" class="draggable-window hidden bg-zinc-950 border-2 border-indigo-500 rounded-2xl p-3 shadow-2xl w-full max-w-[640px] h-[400px] flex flex-col">
+        <div id="floating-stream-header" class="flex justify-between items-center bg-zinc-900 p-2 rounded-xl border border-zinc-800 mb-2 drag-header select-none">
+            <span id="floating-stream-title" class="text-xs font-black text-indigo-400 uppercase tracking-widest">Камера клієнта: Стіл #</span>
+            <div class="flex gap-2">
+                <button onclick="toggleFullscreenStream()" class="text-zinc-400 hover:text-white font-bold text-xs bg-zinc-800 px-2 py-1 rounded-lg mr-1"><i class="fas fa-expand"></i></button>
+                <button onclick="closeFloatingStream()" class="text-zinc-400 hover:text-white font-bold text-xs bg-zinc-800 px-2 py-1 rounded-lg"><i class="fas fa-times"></i></button>
+            </div>
+        </div>
+        <div class="flex-1 bg-black rounded-xl overflow-hidden relative border border-zinc-900 flex items-center justify-center" id="floating-stream-content">
+            <img id="floating-stream-img" src="" class="w-full h-full object-contain" alt="LIVE STREAM">
+            <div class="absolute bottom-3 left-3 bg-red-600 text-white px-2 py-0.5 rounded text-[9px] font-bold tracking-widest animate-pulse uppercase">LIVE HD</div>
+        </div>
+    </div>
+
     <div id="nexus-global-modal" class="fixed inset-0 z-[9999] bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
         <div class="bg-zinc-950 border border-zinc-800 p-6 rounded-2xl w-full max-w-sm shadow-2xl space-y-4">
             <h3 id="nexus-modal-title" class="text-[11px] font-black uppercase tracking-widest text-indigo-400">Система</h3>
@@ -957,6 +1092,19 @@ ADMIN_HTML = """
             btn.classList.add('active'); btn.classList.remove('text-zinc-400');
 
             if (tabId === 'map') { drawTableMap(); }
+            if (tabId === 'monitoring') { renderDevices(); }
+        }
+
+        // ПОВНОЕКРАННИЙ РЕЖИМ СТРИМУ
+        function toggleFullscreenStream() {
+            const win = document.getElementById('floating-stream-window');
+            if (!document.fullscreenElement) {
+                win.requestFullscreen().catch(err => {
+                    showAlert(`Помилка повноекранного режиму: ${err.message}`);
+                });
+            } else {
+                document.exitFullscreen();
+            }
         }
 
         // DRAG & DROP ДЛЯ ФОТО СТРАВ
@@ -1156,7 +1304,7 @@ ADMIN_HTML = """
             
             if(filtered.length === 0) { grid.innerHTML = `<div class="col-span-3 text-center text-zinc-500 py-6 text-xs font-bold">Немає страв</div>`; return; }
 
-            // ЗОБРАЖЕННЯ В ПОВНОМУ РОЗМІРІ ТУТ (object-contain bg-zinc-950)
+            // ЗОБРАЖЕННЯ В ПОВНОМУ РОЗМІРІ БЕЗ ОБРІЗАНЬ
             grid.innerHTML = filtered.map(item => `
                 <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden flex flex-col justify-between">
                     ${item.image ? `<img src="${item.image}" class="w-full h-24 object-contain bg-zinc-950 border-b border-zinc-800">` : `<div class="w-full h-24 bg-zinc-950 flex items-center justify-center text-xl border-b border-zinc-800">🍽️</div>`}
@@ -1211,39 +1359,67 @@ ADMIN_HTML = """
             if(ind) { ind.innerText = 'Файл не обрано'; ind.className = 'text-[9px] text-zinc-600 truncate max-w-[200px]'; document.getElementById('drop-icon').className = "fas fa-cloud-upload-alt text-lg text-zinc-500"; }
         }
 
-        // РЕНДЕР МОНІТОРИНГУ 
+        // РЕНДЕР МОНІТОРИНГУ ТА КІЛЬКОСТІ СТОЛІВ
+        function changeTablesCount(delta) {
+            let tablesCount = parseInt(localStorage.getItem('nexus_tables_count') || '12');
+            tablesCount += delta;
+            if(tablesCount < 1) tablesCount = 1;
+            localStorage.setItem('nexus_tables_count', tablesCount);
+            
+            document.getElementById('tables-count-display-monitor').innerText = tablesCount;
+            document.getElementById('tables-count-display-map').innerText = tablesCount;
+            
+            renderDevices();
+            drawTableMap();
+        }
+
+        // Ініціалізація лічильників при старті
+        document.getElementById('tables-count-display-monitor').innerText = localStorage.getItem('nexus_tables_count') || '12';
+        document.getElementById('tables-count-display-map').innerText = localStorage.getItem('nexus_tables_count') || '12';
+
         function renderDevices() {
             const container = document.getElementById('devices-container');
             if(!container) return;
-            const keys = Object.keys(liveDevicesData);
-            if(keys.length === 0) {
-                container.innerHTML = `<div class="col-span-4 text-center text-zinc-500 py-12 font-bold text-xs">Немає активних підключень</div>`;
-                return;
-            }
-            container.innerHTML = keys.map(uuid => {
-                const dev = liveDevicesData[uuid];
-                return `
-                    <div class="admin-card p-4 rounded-2xl flex flex-col justify-between border-l-4 border-l-emerald-500">
-                        <div>
-                            <div class="flex justify-between items-center mb-2">
-                                <span class="bg-zinc-950 text-emerald-400 border border-zinc-800 px-2.5 py-1 rounded-xl text-xs font-black">Стіл #${dev.table}</span>
-                                <span class="text-[10px] text-zinc-500 font-bold">Останній кадр: ${dev.last_seen}</span>
-                            </div>
-                            <div class="grid grid-cols-2 gap-2 text-[11px] mb-3 bg-zinc-950 p-2.5 rounded-xl border border-zinc-900 font-medium">
-                                <div class="text-zinc-400">Розділ: <b class="text-zinc-200">${dev.category}</b></div>
-                                <div class="text-zinc-400">Кошик: <b class="text-indigo-400">${dev.cart_total} ₴</b></div>
-                                <div class="text-zinc-400">Вікно: <b class="text-amber-500">${dev.modal}</b></div>
-                                <div class="text-zinc-400">Скролл: <b class="text-zinc-200">${dev.scroll}%</b></div>
-                            </div>
-                            <div class="w-full h-40 bg-black rounded-xl overflow-hidden border border-zinc-800 relative">
-                                <div id="placeholder-${uuid}" class="absolute text-[10px] text-zinc-600 font-bold flex flex-col items-center gap-2 inset-0 justify-center">
-                                    <i class="fas fa-spinner fa-spin text-sm text-indigo-500"></i> Трансляція...
+            
+            let tablesCount = parseInt(localStorage.getItem('nexus_tables_count') || '12');
+            let html = '';
+            
+            for(let i = 1; i <= tablesCount; i++) {
+                let uuid = Object.keys(liveDevicesData).find(k => String(liveDevicesData[k].table) === String(i));
+                let dev = uuid ? liveDevicesData[uuid] : null;
+                
+                if (dev) {
+                    html += `
+                        <div class="admin-card p-4 rounded-2xl flex flex-col justify-between border-l-4 border-l-emerald-500">
+                            <div>
+                                <div class="flex justify-between items-center mb-2">
+                                    <span class="bg-zinc-950 text-emerald-400 border border-zinc-800 px-2.5 py-1 rounded-xl text-xs font-black">Стіл #${i}</span>
+                                    <span class="text-[10px] text-zinc-500 font-bold">Останній кадр: ${dev.last_seen}</span>
                                 </div>
-                                <img id="stream-${uuid}" class="w-full h-full object-contain hidden relative z-10" src="" alt="STREAM">
+                                <div class="grid grid-cols-2 gap-2 text-[11px] mb-3 bg-zinc-950 p-2.5 rounded-xl border border-zinc-900 font-medium">
+                                    <div class="text-zinc-400">Розділ: <b class="text-zinc-200">${dev.category}</b></div>
+                                    <div class="text-zinc-400">Кошик: <b class="text-indigo-400">${dev.cart_total} ₴</b></div>
+                                    <div class="text-zinc-400">Вікно: <b class="text-amber-500">${dev.modal}</b></div>
+                                    <div class="text-zinc-400">Скролл: <b class="text-zinc-200">${dev.scroll}%</b></div>
+                                </div>
+                                <div class="w-full h-40 bg-black rounded-xl overflow-hidden border border-zinc-800 relative cursor-pointer" onclick="openFloatingStream('${uuid}', '${i}')">
+                                    <div id="placeholder-${uuid}" class="absolute text-[10px] text-zinc-600 font-bold flex flex-col items-center gap-2 inset-0 justify-center">
+                                        <i class="fas fa-spinner fa-spin text-sm text-indigo-500"></i> Трансляція...
+                                    </div>
+                                    <img id="stream-uuid-${uuid}" class="w-full h-full object-contain hidden relative z-10" src="" alt="STREAM">
+                                    <div class="absolute top-2 right-2 bg-black/60 text-white px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-widest z-20"><i class="fas fa-expand mr-1"></i> Відкрити</div>
+                                </div>
                             </div>
-                        </div>
-                    </div>`;
-            }).join('');
+                        </div>`;
+                } else {
+                    html += `
+                        <div class="bg-zinc-900/50 border border-zinc-800/50 p-4 rounded-2xl flex flex-col justify-center items-center h-full opacity-60">
+                            <span class="bg-zinc-800 text-zinc-500 font-black px-2.5 py-1 rounded-xl text-xs mb-2">Стіл #${i}</span>
+                            <span class="text-zinc-600 text-xs font-bold uppercase tracking-widest">Офлайн</span>
+                        </div>`;
+                }
+            }
+            container.innerHTML = html;
         }
 
         // КАРТА СТОЛІВ (CANVAS)
@@ -1253,7 +1429,7 @@ ADMIN_HTML = """
             const ctx = canvas.getContext('2d');
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-            const totalTables = 15; // 15 столів для прикладу
+            let tablesCount = parseInt(localStorage.getItem('nexus_tables_count') || '12');
             const cols = 5;
             const radius = 30;
             const startX = 80;
@@ -1261,7 +1437,7 @@ ADMIN_HTML = """
             const spaceX = 160;
             const spaceY = 110;
 
-            for(let i=1; i<=totalTables; i++) {
+            for(let i=1; i<=tablesCount; i++) {
                 const row = Math.floor((i-1) / cols);
                 const col = (i-1) % cols;
                 const x = startX + col * spaceX;
@@ -1380,6 +1556,52 @@ ADMIN_HTML = """
             if(dList) dList.innerHTML = data.devices.map(d => `<div class="bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-[10px]"><div class="flex justify-between font-bold mb-1"><span class="text-indigo-400">Стіл ${d.table}</span><span class="text-zinc-500">${d.last_seen}</span></div><div class="bg-black/40 p-1.5 rounded font-mono text-[9px] text-zinc-400 break-all leading-tight">${d.user_agent}</div></div>`).join('') || '<p class="text-zinc-500 text-[10px]">Історія пристроїв порожня</p>';
         }
 
+        // ОБРОБКА ПЛАВАЮЧОГО ВІКНА СТРИМУ (DRAG & FULLSCREEN)
+        socket.on('receive_frame', (data) => {
+            const smallImg = document.getElementById(`stream-uuid-${data.uuid}`);
+            if (smallImg) smallImg.src = data.frame;
+
+            const floatingWin = document.getElementById('floating-stream-window');
+            if (!floatingWin.classList.contains('hidden') && floatingWin.dataset.currentUuid === data.uuid) {
+                document.getElementById('floating-stream-img').src = data.frame;
+            }
+        });
+
+        function openFloatingStream(uuid, tableNum) {
+            const win = document.getElementById('floating-stream-window');
+            document.getElementById('floating-stream-title').innerText = `Камера клієнта: Стіл #${tableNum}`;
+            win.dataset.currentUuid = uuid;
+            win.classList.remove('hidden');
+            win.style.top = '20%';
+            win.style.left = '10%';
+        }
+
+        function closeFloatingStream() {
+            document.getElementById('floating-stream-window').classList.add('hidden');
+        }
+
+        function initDraggableWindow(elementId, headerId) {
+            const el = document.getElementById(elementId);
+            const header = document.getElementById(headerId);
+            let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+            header.onmousedown = dragMouseDown;
+
+            function dragMouseDown(e) {
+                e = e || window.event; e.preventDefault();
+                pos3 = e.clientX; pos4 = e.clientY;
+                document.onmouseup = closeDragElement;
+                document.onmousemove = elementDrag;
+            }
+            function elementDrag(e) {
+                e = e || window.event; e.preventDefault();
+                pos1 = pos3 - e.clientX; pos2 = pos4 - e.clientY;
+                pos3 = e.clientX; pos4 = e.clientY;
+                el.style.top = (el.offsetTop - pos2) + "px"; el.style.left = (el.offsetLeft - pos1) + "px";
+            }
+            function closeDragElement() { document.onmouseup = null; document.onmousemove = null; }
+        }
+        initDraggableWindow('floating-stream-window', 'floating-stream-header');
+
         function updateOrderStatus(id, status) { socket.emit('order_status_update', { id, status }); }
         function deleteOrder(id) { showConfirm('Видалити замовлення?', () => { socket.emit('order_delete', { id }); }); }
         function deleteMenuItem(id) { showConfirm('Видалити страву з меню?', () => { socket.emit('menu_delete', { id }); }); }
@@ -1434,4 +1656,4 @@ LOGIN_HTML = """
 # 6. ТОЧКА ВХОДУ ДЛЯ ЗАПУСКУ СЕРВЕРА
 # ==============================================================================
 if __name__ == '__main__':
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+    socketio.run(app, host='0.0.0.0', port=10000, debug=True)
