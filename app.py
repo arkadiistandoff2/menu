@@ -481,19 +481,26 @@ def handle_ask_gemini():
     Якщо порад немає, поверни [].
     """
     
-    try:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={token}"
-        data = {"contents": [{"parts": [{"text": prompt}]}]}
-        req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers={'Content-Type': 'application/json'})
+try:
+        # Очищаємо токен від можливих пробілів
+        clean_token = token.strip()
         
-        with urllib.request.urlopen(req) as response:
-            res_data = json.loads(response.read().decode('utf-8'))
-            text_reply = res_data['candidates'][0]['content']['parts'][0]['text']
-            
-            text_reply = text_reply.replace('```json', '').replace('```', '').strip()
-            suggestions = json.loads(text_reply)
-            socketio.emit('gemini_suggestions', suggestions, room=request.sid)
-            
+        # Тепер викликаємо модель БЕЗ токена в самому URL
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+        
+        payload = {
+            "contents": [{
+                "parts": [{"text": prompt}]
+            }]
+        }
+        
+        # Передаємо ключ через правильні заголовки авторизації
+        headers = {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': clean_token  # Спеціальний заголовок Google для нових ключів
+        }
+        
+        req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method='POST')
     except Exception as e:
         socketio.emit('gemini_error', {'msg': f'Помилка підключення до Gemini API: {str(e)}'}, room=request.sid)
 
