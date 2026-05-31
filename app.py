@@ -391,7 +391,7 @@ def handle_review_add(data):
 def auto_reply_to_review(review_id, review_data, token):
     prompt = f"Користувач {review_data['name']} залишив відгук про наш заклад: '{review_data['text']}' з оцінкою {review_data['rating']} зірок. Напиши коротку, стильну та ввічливу відповідь від імені адміністрації кафе (1-2 речення). Без маркдауну."
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+        url = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
         headers = {'Content-Type': 'application/json', 'x-goog-api-key': token}
         req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method='POST')
@@ -496,7 +496,7 @@ def handle_chat_gemini(data):
     Відповідай коротко, стильно і по суті. Без зайвої води.
     """
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+        url = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
         payload = {"contents": [{"parts": [{"text": prompt}]}]}
         headers = {'Content-Type': 'application/json', 'x-goog-api-key': token}
         req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method='POST')
