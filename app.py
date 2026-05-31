@@ -489,11 +489,38 @@ def handle_chat_gemini(data):
     stats = calculate_dashboard_stats()
     menu = get_all_menu()
     
+    # Формування розширеного контексту для Gemini
+    menu_data = []
+    for item in menu:
+        # Рахуємо продажі для кожного товару
+        sales_count = sum(i.get('qty', 0) for o in global_orders if o.get('status') == 'Закрито' for i in o.get('items', []) if i.get('id') == item['_id'])
+        
+        # Збираємо відгуки (якщо є логіка прив'язки відгуків до страв, інакше загальні)
+        menu_data.append({
+            "назва": item['name'],
+            "ціна": item['price'],
+            "категорія": item['category'],
+            "опис": item.get('description', ''),
+            "продано_раз": sales_count,
+            "в_наявності": "Так" if item.get('available') else "Ні"
+        })
+
     prompt = f"""
-    Ти - професійний ШІ-асистент дизайнера та менеджера ресторану.
-    Поточна статистика кафе: {json.dumps(stats, ensure_ascii=False)}.
-    Запит від користувача: {user_msg}
-    Відповідай коротко, стильно і по суті. Без зайвої води.
+    Ти - аналітичний асистент Nexus Cafe. Твоє завдання - надавати повну інформацію про асортимент.
+    
+    ДАНІ ПРО ТОВАРИ:
+    {json.dumps(menu_data, ensure_ascii=False)}
+    
+    ЗАГАЛЬНА СТАТИСТИКА:
+    {json.dumps(stats, ensure_ascii=False)}
+    
+    ЗАПИТ КОРИСТУВАЧА: {user_msg}
+    
+    ТВОЄ ЗАВДАННЯ:
+    1. Якщо запитують про конкретний товар: дай назву, ціну, опис, кількість продажів та чи є він в наявності.
+    2. Якщо запитують "що найкраще купують": проаналізуй 'продано_раз' та порадь топ-страви.
+    3. Якщо запитують про відгуки: згадай середній рейтинг кафе ({stats.get('avg_rating')}).
+    Відповідай професійно, структуровано (використовуй списки), але коротко. і ще будь ласка давай аналітику що можна покрашити
     """
     try:
         url = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
