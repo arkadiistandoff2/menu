@@ -488,25 +488,24 @@ def handle_chat_gemini(data):
     
     stats = calculate_dashboard_stats()
     menu = get_all_menu()
+    global_orders = list(db.orders.find())
     
     # Формування розширеного контексту для Gemini
     menu_data = []
     for item in menu:
         # Рахуємо продажі для кожного товару
-        sales_count = sum(i.get('qty', 0) for o in global_orders if o.get('status') == 'Закрито' for i in o.get('items', []) if i.get('id') == item['_id'])
+        sales_count = sum(int(i.get('qty', 0)) for o in global_orders if o.get('status') == 'Закрито' for i in o.get('items', []) if i.get('id') == item['_id'])
         
-        # Збираємо відгуки (якщо є логіка прив'язки відгуків до страв, інакше загальні)
         menu_data.append({
             "назва": item['name'],
             "ціна": item['price'],
             "категорія": item['category'],
-            "опис": item.get('description', ''),
             "продано_раз": sales_count,
             "в_наявності": "Так" if item.get('available') else "Ні"
         })
 
     prompt = f"""
-    Ти - аналітичний асистент Nexus Cafe. Твоє завдання - надавати повну інформацію про асортимент.
+    Ти - елітний аналітичний ШІ-асистент Nexus Cafe. Твоє завдання - надавати глибоку та корисну аналітику бізнесу.
     
     ДАНІ ПРО ТОВАРИ:
     {json.dumps(menu_data, ensure_ascii=False)}
@@ -516,11 +515,11 @@ def handle_chat_gemini(data):
     
     ЗАПИТ КОРИСТУВАЧА: {user_msg}
     
-    ТВОЄ ЗАВДАННЯ:
-    1. Якщо запитують про конкретний товар: дай назву, ціну, опис, кількість продажів та чи є він в наявності.
-    2. Якщо запитують "що найкраще купують": проаналізуй 'продано_раз' та порадь топ-страви.
-    3. Якщо запитують про відгуки: згадай середній рейтинг кафе ({stats.get('avg_rating')}).
-    Відповідай професійно, структуровано (використовуй списки), але коротко. і ще будь ласка давай аналітику що можна покрашити
+    ТВОЄ ЗАВДАННЯ ТА ПРАВИЛА ФОРМАТУВАННЯ:
+    1. Надай детальну аналітику: що продається краще, які є просідання, що можна покращити.
+    2. Використовуй Markdown для форматування тексту (списки, абзаци).
+    3. ОБОВ'ЯЗКОВО виділяй жирним шрифтом (**ось так**) ключові показники, назви страв, проблеми та рішення. Цей текст буде підсвічено неоном в інтерфейсі.
+    4. Роби відповідь чіткою, професійною, але структурованою. Запропонуй 2-3 конкретні ідеї для оптимізації прибутку або меню.
     """
     try:
         url = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
@@ -975,6 +974,7 @@ ADMIN_HTML = """
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
         body { background-color: #09090b; color: #f4f4f5; font-family: system-ui, sans-serif; overflow-x: hidden; }
@@ -982,17 +982,55 @@ ADMIN_HTML = """
         .tab-btn.active { background-color: #4f46e5 !important; color: white !important; border-color: #6366f1 !important; }
         .drag-over { border-color: #4f46e5 !important; background-color: rgba(79, 70, 229, 0.05); }
         .hide-scroll::-webkit-scrollbar { display: none; }
-        .draggable-window { position: absolute; z-index: 100; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
+        .draggable-window { position: absolute; z-index: 100; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); transition: height 0.3s ease, min-height 0.3s ease; }
         .drag-header { cursor: move; }
         
-        /* Стиль для зміни розміру Gemini чату */
         .gemini-resizer { 
             resize: both; 
             overflow: hidden; 
-            min-width: 300px; 
-            min-height: 400px; 
+            min-width: 350px; 
+            min-height: 450px; 
             max-width: 90vw; 
             max-height: 90vh;
+        }
+
+        .gemini-minimized {
+            height: 46px !important;
+            min-height: 46px !important;
+            resize: none !important;
+            overflow: hidden !important;
+            padding-bottom: 0 !important;
+            border-bottom: none !important;
+        }
+
+        /* Неонова вібрація для Gemini Markdown */
+        .gemini-msg strong {
+            color: #d8b4fe;
+            text-shadow: 0 0 5px #c084fc, 0 0 10px #a855f7;
+            animation: neon-pulse 1.5s infinite alternate;
+            font-weight: 900;
+        }
+        @keyframes neon-pulse {
+            from { text-shadow: 0 0 2px #c084fc, 0 0 5px #a855f7; }
+            to { text-shadow: 0 0 8px #c084fc, 0 0 15px #a855f7, 0 0 20px #9333ea; }
+        }
+        .gemini-msg ul { list-style-type: disc; padding-left: 1.5rem; margin-top: 0.5rem; margin-bottom: 0.5rem; }
+        .gemini-msg ol { list-style-type: decimal; padding-left: 1.5rem; margin-top: 0.5rem; margin-bottom: 0.5rem; }
+        .gemini-msg li { margin-bottom: 0.25rem; }
+        .gemini-msg p { margin-bottom: 0.5rem; }
+        .gemini-msg h1, .gemini-msg h2, .gemini-msg h3 { font-weight: 900; margin-top: 1rem; margin-bottom: 0.5rem; color: #a5b4fc; }
+
+        /* Анімація завантаження Gemini */
+        .gemini-typing { display: flex; gap: 5px; align-items: center; padding: 12px; justify-content: center; }
+        .gemini-typing span {
+            width: 8px; height: 8px; background: #818cf8; border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+        .gemini-typing span:nth-child(1) { animation-delay: -0.32s; }
+        .gemini-typing span:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes bounce {
+            0%, 80%, 100% { transform: scale(0); background: #818cf8; }
+            40% { transform: scale(1); background: #c084fc; box-shadow: 0 0 10px #c084fc; }
         }
     </style>
 </head>
@@ -1282,28 +1320,42 @@ ADMIN_HTML = """
     </div>
     {% endif %}
 
-    <div id="gemini-chat-modal" class="draggable-window gemini-resizer hidden bg-zinc-950 border border-indigo-500 rounded-2xl flex flex-col shadow-2xl" style="top: 15%; right: 5%; width: 380px; height: 500px;">
+    <div id="gemini-chat-modal" class="draggable-window gemini-resizer hidden bg-zinc-950 border border-indigo-500 rounded-2xl flex flex-col shadow-2xl" style="top: 15%; right: 5%; width: 400px; height: 550px;">
         <div id="gemini-chat-header" class="bg-zinc-900 border-b border-zinc-800 p-3 flex justify-between items-center drag-header select-none rounded-t-2xl">
             <div class="flex items-center gap-2">
                 <i class="fas fa-robot text-indigo-400"></i>
-                <span class="text-xs font-black text-zinc-200 uppercase tracking-widest">Gemini Асистент</span>
+                <span class="text-xs font-black text-zinc-200 uppercase tracking-widest">Gemini Аналітик</span>
             </div>
-            <button onclick="closeGeminiChat()" class="text-zinc-500 hover:text-white font-bold bg-zinc-800 px-2.5 py-1 rounded-lg text-xs transition-colors"><i class="fas fa-times"></i></button>
+            <div class="flex gap-1.5">
+                <button onclick="toggleMinimizeGemini()" class="text-zinc-500 hover:text-indigo-400 font-bold bg-zinc-800 px-2.5 py-1 rounded-lg text-xs transition-colors"><i class="fas fa-minus"></i></button>
+                <button onclick="closeGeminiChat()" class="text-zinc-500 hover:text-red-400 font-bold bg-zinc-800 px-2.5 py-1 rounded-lg text-xs transition-colors"><i class="fas fa-times"></i></button>
+            </div>
         </div>
         
         <div id="gemini-chat-history" class="flex-1 overflow-y-auto p-4 space-y-4 hide-scroll bg-black/40">
             <div class="flex flex-col gap-1 items-start">
-                <div class="bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs p-3 rounded-xl rounded-tl-none max-w-[85%]">
-                    Привіт! Я твій ШІ-помічник. Чим можу допомогти з кафе?
+                <div class="gemini-msg bg-zinc-900 border border-indigo-500/30 text-zinc-200 text-xs p-3 rounded-xl rounded-tl-none max-w-[85%] shadow-[0_0_10px_rgba(99,102,241,0.1)]">
+                    Привіт! Я твій елітний ШІ-помічник. Зможу розписати детальну аналітику, вказати на проблеми та запропонувати оптимізацію меню. Просто натисни кнопку швидкого аналізу або задай своє питання!
                 </div>
             </div>
         </div>
         
-        <div class="p-3 bg-zinc-900 border-t border-zinc-800 flex gap-2 rounded-b-2xl">
-            <input type="text" id="gemini-chat-input" placeholder="Напишіть запит..." class="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500" onkeypress="if(event.key === 'Enter') sendGeminiMessage()">
-            <button onclick="sendGeminiMessage()" class="bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl px-4 py-2 text-xs font-bold transition-colors">
-                <i class="fas fa-paper-plane"></i>
+        <div id="gemini-loading" class="hidden px-4 pb-2">
+            <div class="bg-zinc-900 border border-indigo-500/50 rounded-xl w-max shadow-[0_0_15px_rgba(99,102,241,0.2)]">
+                <div class="gemini-typing"><span></span><span></span><span></span></div>
+            </div>
+        </div>
+        
+        <div class="p-3 bg-zinc-900 border-t border-zinc-800 flex flex-col gap-2 rounded-b-2xl" id="gemini-input-area">
+            <button onclick="sendQuickAnalysis()" class="bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 hover:bg-indigo-600/40 rounded-xl px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-all w-full flex items-center justify-center gap-2">
+                <i class="fas fa-bolt text-amber-400"></i> Аналізувати поточний стан
             </button>
+            <div class="flex gap-2">
+                <input type="text" id="gemini-chat-input" placeholder="Напишіть запит або запитання..." class="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500" onkeypress="if(event.key === 'Enter') sendGeminiMessage()">
+                <button onclick="sendGeminiMessage()" class="bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl px-4 py-2 text-xs font-bold transition-colors">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
         </div>
     </div>
 
@@ -2020,14 +2072,31 @@ ADMIN_HTML = """
             document.getElementById('gemini-chat-modal').classList.add('hidden');
         }
 
+        function toggleMinimizeGemini() {
+            const modal = document.getElementById('gemini-chat-modal');
+            modal.classList.toggle('gemini-minimized');
+        }
+
+        function sendQuickAnalysis() {
+            const inputField = document.getElementById('gemini-chat-input');
+            inputField.value = "Зроби повний детальний аналіз поточного стану закладу: що продається найкраще, які є проблеми та що можна покращити.";
+            sendGeminiMessage();
+        }
+
         function sendGeminiMessage() {
             const inputField = document.getElementById('gemini-chat-input');
             const msg = inputField.value.trim();
             if(!msg) return;
 
-            // Додаємо повідомлення юзера в UI
             addChatMessage(msg, 'user');
             inputField.value = '';
+            
+            // Показуємо анімацію загрузки
+            document.getElementById('gemini-loading').classList.remove('hidden');
+            
+            // Відправляємо скролл вниз
+            const history = document.getElementById('gemini-chat-history');
+            history.scrollTop = history.scrollHeight;
 
             socket.emit('chat_gemini', { message: msg });
         }
@@ -2036,10 +2105,13 @@ ADMIN_HTML = """
             const history = document.getElementById('gemini-chat-history');
             const isUser = sender === 'user';
             
+            // Парсимо маркдаун для бота, а для юзера просто робимо escape
+            const parsedText = isUser ? escapeHtml(text) : marked.parse(text);
+            
             const msgHtml = `
                 <div class="flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}">
-                    <div class="${isUser ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-none'} text-xs p-3 rounded-xl max-w-[85%] shadow-md">
-                        ${escapeHtml(text)}
+                    <div class="gemini-msg ${isUser ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-zinc-900 border border-indigo-500/30 text-zinc-200 rounded-tl-none shadow-[0_0_10px_rgba(99,102,241,0.1)]'} text-xs p-3 rounded-xl max-w-[85%]">
+                        ${parsedText}
                     </div>
                 </div>
             `;
@@ -2049,11 +2121,13 @@ ADMIN_HTML = """
         }
 
         socket.on('gemini_chat_reply', (data) => {
+            document.getElementById('gemini-loading').classList.add('hidden');
             addChatMessage(data.msg, 'bot');
         });
 
         socket.on('gemini_chat_error', (data) => {
-            addChatMessage(`Помилка: ${data.msg}`, 'bot');
+            document.getElementById('gemini-loading').classList.add('hidden');
+            addChatMessage(`**Помилка:** ${data.msg}`, 'bot');
         });
 
     </script>
