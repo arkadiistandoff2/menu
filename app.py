@@ -3,6 +3,7 @@ eventlet.monkey_patch()
 
 import os
 import json
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from bson.objectid import ObjectId
 from flask import Flask, request, render_template_string, session, redirect, url_for, jsonify
@@ -17,11 +18,15 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'nexus-pro-ultra-key-202
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet', max_http_buffer_size=15000000)
 
 MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:27017/cafe_db')
-ADMIN_PASSWORD = "1111"
 
 try:
     client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
     db = client.get_default_database(default='cafe_db')
+    
+    # Ініціалізація базових налаштувань, якщо їх немає
+    if not db.settings.find_one({"_id": "system"}):
+        db.settings.insert_one({"_id": "system", "gemini_enabled": False, "gemini_token": ""})
+        
 except Exception as e:
     print(f"Помилка БД: {e}")
 
@@ -117,28 +122,53 @@ def index(table_id=None):
 def admin():
     if not session.get('admin_logged'):
         return redirect(url_for('login'))
-    return render_template_string(ADMIN_HTML)
+        
+    settings = db.settings.find_one({"_id": "system"}) or {}
+    users = list(db.users.find({}, {'_id': 0}))
+    
+    return render_template_string(
+        ADMIN_HTML, 
+        role=session.get('role'), 
+        permissions=session.get('permissions', {}),
+        settings=settings,
+        users_json=json.dumps(users)
+    )
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     error = None
     if request.method == 'POST':
         password = request.form.get('password')
-        if password == ADMIN_PASSWORD:
+        
+        # Перевірка майстер-акаунта
+        if password == "sonia":
             session['admin_logged'] = True
+            session['role'] = 'master'
+            session['permissions'] = {} # Майстер має всі права автоматично
+            return redirect(url_for('admin'))
+            
+        # Перевірка звичайних користувачів у БД
+        user = db.users.find_one({"password": password})
+        if user:
+            session['admin_logged'] = True
+            session['role'] = 'user'
+            session['permissions'] = user.get('permissions', {})
             return redirect(url_for('admin'))
         else:
-            error = "Невірний пароль адміністратора!"
+            error = "Невірний пароль!"
+            
     return render_template_string(LOGIN_HTML, error=error)
 
 @app.route('/logout')
 def logout():
     session.pop('admin_logged', None)
+    session.pop('role', None)
+    session.pop('permissions', None)
     return redirect(url_for('login'))
 
 @app.route('/export_db')
 def export_db():
-    if not session.get('admin_logged'):
+    if not session.get('admin_logged') or session.get('role') != 'master':
         return jsonify({'error': 'Unauthorized'}), 401
     data = {
         'menu': get_all_menu(),
@@ -354,7 +384,7 @@ def handle_reviews_delete(data):
 
 @socketio.on('admin_clear_db')
 def handle_admin_clear_db():
-    if session.get('admin_logged'):
+    if session.get('role') == 'master':
         db.menu.delete_many({})
         db.orders.delete_many({})
         db.reviews.delete_many({})
@@ -363,7 +393,7 @@ def handle_admin_clear_db():
 
 @socketio.on('admin_import_db')
 def handle_admin_import_db(data):
-    if session.get('admin_logged'):
+    if session.get('role') == 'master':
         db.menu.delete_many({})
         db.orders.delete_many({})
         db.reviews.delete_many({})
@@ -380,6 +410,111 @@ def handle_admin_import_db(data):
             for i in data['reviews']: i.pop('_id', None)
             db.reviews.insert_many(data['reviews'])
         handle_admin_init()
+
+# -- SOCKET EVENTS ДЛЯ НАЛАШТУВАНЬ МАЙСТЕР-АКАУНТА ТА КОРИСТУВАЧІВ --
+@socketio.on('admin_save_settings')
+def handle_admin_save_settings(data):
+    if session.get('role') == 'master':
+        db.settings.update_one({"_id": "system"}, {"$set": {
+            "gemini_enabled": data.get("gemini_enabled", False),
+            "gemini_token": data.get("gemini_token", "")
+        }}, upsert=True)
+
+@socketio.on('admin_save_user')
+def handle_admin_save_user(data):
+    if session.get('role') == 'master':
+        original_pw = data.get('original_password')
+        new_pw = data.get('password')
+        perms = data.get('permissions', {})
+        
+        if original_pw:
+            db.users.update_one({"password": original_pw}, {"$set": {"password": new_pw, "permissions": perms}})
+        else:
+            if not db.users.find_one({"password": new_pw}) and new_pw != 'sonia':
+                db.users.insert_one({"password": new_pw, "permissions": perms})
+        
+        users = list(db.users.find({}, {'_id': 0}))
+        socketio.emit('users_sync', users, room=request.sid)
+
+@socketio.on('admin_delete_user')
+def handle_admin_delete_user(data):
+    if session.get('role') == 'master':
+        pw = data.get('password')
+        db.users.delete_one({"password": pw})
+        users = list(db.users.find({}, {'_id': 0}))
+        socketio.emit('users_sync', users, room=request.sid)
+
+# -- GEMINI AGENT INTEGRATION --
+@socketio.on('ask_gemini')
+def handle_ask_gemini():
+    if not session.get('admin_logged'): return
+    
+    settings = db.settings.find_one({"_id": "system"})
+    if not settings or not settings.get('gemini_enabled') or not settings.get('gemini_token'):
+        socketio.emit('gemini_error', {'msg': 'Gemini не увімкнено або відсутній токен у налаштуваннях.'}, room=request.sid)
+        return
+        
+    token = settings['gemini_token']
+    stats = calculate_dashboard_stats()
+    menu = get_all_menu()
+    
+    prompt = f"""
+    Ти - професійний аналітик та менеджер ресторану. Проаналізуй дані кафе.
+    Статистика (включає загальний дохід, топ продажів та рейтинг): {json.dumps(stats, ensure_ascii=False)}
+    Меню з поточними цінами: {json.dumps(menu, ensure_ascii=False)}
+    
+    Сформуй поради щодо оптимізації меню. Якщо бачиш що страва популярна, можеш порадити підняти ціну. Якщо непопулярна - знизити або змінити назву.
+    Твоя відповідь має бути ВИНЯТКОВО у форматі валідного JSON масиву об'єктів (БЕЗ маркдауну, БЕЗ блоків коду). 
+    Структура об'єкта:
+    [
+      {{
+         "what": "Що міняємо (старе значення, наприклад: 150 ₴)",
+         "to": "На що міняємо (нове значення, наприклад: 165)",
+         "where": "Назва страви",
+         "reason": "Чому це треба зробити (українською)",
+         "action_type": "update_menu", 
+         "target_id": "ID страви з меню",
+         "field": "price",
+         "new_value": "165"
+      }}
+    ]
+    Якщо порад немає, поверни [].
+    """
+    
+    try:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={token}"
+        data = {"contents": [{"parts": [{"text": prompt}]}]}
+        req = urllib.request.Request(url, data=json.dumps(data).encode('utf-8'), headers={'Content-Type': 'application/json'})
+        
+        with urllib.request.urlopen(req) as response:
+            res_data = json.loads(response.read().decode('utf-8'))
+            text_reply = res_data['candidates'][0]['content']['parts'][0]['text']
+            
+            text_reply = text_reply.replace('```json', '').replace('```', '').strip()
+            suggestions = json.loads(text_reply)
+            socketio.emit('gemini_suggestions', suggestions, room=request.sid)
+            
+    except Exception as e:
+        socketio.emit('gemini_error', {'msg': f'Помилка підключення до Gemini API: {str(e)}'}, room=request.sid)
+
+@socketio.on('apply_gemini_action')
+def handle_apply_gemini_action(data):
+    if not session.get('admin_logged'): return
+    
+    action_type = data.get('action_type')
+    target_id = data.get('target_id')
+    field = data.get('field')
+    new_value = data.get('new_value')
+    
+    if action_type == 'update_menu' and target_id and field:
+        # Конвертуємо тип для ціни
+        if field == 'price':
+            try: new_value = float(new_value)
+            except: pass
+            
+        db.menu.update_one({"_id": ObjectId(target_id)}, {"$set": {field: new_value}})
+        socketio.emit('menu_sync', get_all_menu())
+        socketio.emit('gemini_success', {'msg': 'Зміни успішно застосовано!'}, room=request.sid)
 
 # ==============================================================================
 # 5. ШАБЛОНИ КРАСИВОГО КІБЕР-ІНТЕРФЕЙСУ (HTML/JS)
@@ -835,8 +970,9 @@ ADMIN_HTML = """
         .tab-btn.active { background-color: #4f46e5 !important; color: white !important; border-color: #6366f1 !important; }
         .drag-over { border-color: #4f46e5 !important; background-color: rgba(79, 70, 229, 0.05); }
         .hide-scroll::-webkit-scrollbar { display: none; }
-        .draggable-window { position: fixed; z-index: 100; }
+        .draggable-window { position: absolute; z-index: 100; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
         .drag-header { cursor: move; }
+        .gemini-resizer { resize: both; overflow: auto; min-width: 300px; min-height: 250px; }
     </style>
 </head>
 <body class="p-4 md:p-6">
@@ -847,23 +983,43 @@ ADMIN_HTML = """
             <p class="text-[10px] md:text-xs text-zinc-500">Система інтерактивного моніторингу та обробки замовлень</p>
         </div>
         <div class="flex flex-wrap gap-2 items-center">
+            {% if role == 'master' %}
             <button onclick="exportDatabase()" class="bg-zinc-900 border border-zinc-800 text-[10px] md:text-xs px-3 py-2 rounded-xl hover:bg-zinc-800 font-bold"><i class="fas fa-download mr-1"></i> Експорт</button>
             <label class="bg-zinc-900 border border-zinc-800 text-[10px] md:text-xs px-3 py-2 rounded-xl hover:bg-zinc-800 font-bold cursor-pointer"><i class="fas fa-upload mr-1"></i> Імпорт <input type="file" id="import-file" onchange="importDatabase()" class="hidden"></label>
             <button onclick="clearDatabase()" class="bg-red-950/40 border border-red-800/60 text-red-400 text-[10px] md:text-xs px-3 py-2 rounded-xl hover:bg-red-900/40 font-bold">Очистити БД</button>
+            {% endif %}
             <a href="/logout" class="bg-zinc-800 hover:bg-zinc-700 text-[10px] md:text-xs px-3 py-2 rounded-xl font-bold">Вихід</a>
         </div>
     </header>
 
     <div class="flex gap-2 mb-6 bg-zinc-900 p-1.5 rounded-2xl border border-zinc-800/80 overflow-x-auto hide-scroll whitespace-nowrap">
+        {% if role == 'master' or permissions.get('view_orders') %}
         <button onclick="switchTab('orders')" id="tab-orders" class="tab-btn active px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider border border-transparent transition-all"><i class="fas fa-utensils mr-1.5"></i> Замовлення</button>
+        {% endif %}
+        {% if role == 'master' or permissions.get('view_menu') %}
         <button onclick="switchTab('menu')" id="tab-menu" class="tab-btn px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider text-zinc-400 border border-transparent transition-all"><i class="fas fa-book-open mr-1.5"></i> Меню</button>
+        {% endif %}
+        {% if role == 'master' or permissions.get('view_monitoring') %}
         <button onclick="switchTab('monitoring')" id="tab-monitoring" class="tab-btn px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider text-zinc-400 border border-transparent transition-all"><i class="fas fa-desktop mr-1.5"></i> Екрани</button>
+        {% endif %}
+        {% if role == 'master' or permissions.get('view_map') %}
         <button onclick="switchTab('map')" id="tab-map" class="tab-btn px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider text-zinc-400 border border-transparent transition-all"><i class="fas fa-map mr-1.5"></i> Карта</button>
+        {% endif %}
+        {% if role == 'master' or permissions.get('view_analytics') %}
         <button onclick="switchTab('analytics')" id="tab-analytics" class="tab-btn px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider text-zinc-400 border border-transparent transition-all"><i class="fas fa-chart-pie mr-1.5"></i> Аналітика</button>
+        {% endif %}
+        {% if role == 'master' or permissions.get('view_reviews') %}
         <button onclick="switchTab('reviews')" id="tab-reviews" class="tab-btn px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider text-zinc-400 border border-transparent transition-all"><i class="fas fa-star mr-1.5"></i> Відгуки</button>
+        {% endif %}
+        {% if role == 'master' or permissions.get('view_archive') %}
         <button onclick="switchTab('archive')" id="tab-archive" class="tab-btn px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider text-zinc-400 border border-transparent transition-all"><i class="fas fa-box-archive mr-1.5"></i> Архів</button>
+        {% endif %}
+        {% if role == 'master' %}
+        <button onclick="switchTab('settings')" id="tab-settings" class="tab-btn px-4 py-2.5 rounded-xl text-[10px] md:text-xs font-black uppercase tracking-wider text-zinc-400 border border-transparent transition-all"><i class="fas fa-cog mr-1.5"></i> Налаштування</button>
+        {% endif %}
     </div>
 
+    {% if role == 'master' or permissions.get('view_orders') %}
     <div id="content-orders" class="tab-content space-y-6">
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
             <div class="admin-card rounded-2xl p-4 flex flex-col min-h-[150px] lg:min-h-[500px]" ondragover="allowDrop(event)" ondrop="handleDrop(event, 'pending')" ondragenter="highlightDropzone('queue-pending')" ondragleave="unhighlightDropzone('queue-pending')">
@@ -880,7 +1036,9 @@ ADMIN_HTML = """
             </div>
         </div>
     </div>
+    {% endif %}
 
+    {% if role == 'master' or permissions.get('view_menu') %}
     <div id="content-menu" class="tab-content hidden space-y-6">
         <div class="admin-card rounded-2xl p-5 w-full max-w-xl">
             <h3 class="text-sm font-black uppercase tracking-wider mb-4 text-indigo-400 border-b border-zinc-800 pb-2">Додати / Змінити Страву</h3>
@@ -938,7 +1096,9 @@ ADMIN_HTML = """
             <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 max-h-[500px] overflow-y-auto pr-1" id="admin-menu-grid"></div>
         </div>
     </div>
+    {% endif %}
 
+    {% if role == 'master' or permissions.get('view_monitoring') %}
     <div id="content-monitoring" class="tab-content hidden space-y-4">
         <div class="flex justify-between items-center bg-zinc-900 p-4 rounded-xl border border-zinc-800">
             <div>
@@ -953,7 +1113,9 @@ ADMIN_HTML = """
         </div>
         <div id="devices-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
     </div>
+    {% endif %}
 
+    {% if role == 'master' or permissions.get('view_map') %}
     <div id="content-map" class="tab-content hidden space-y-4">
         <div class="flex justify-between items-center bg-zinc-900 p-4 rounded-xl border border-zinc-800">
             <div>
@@ -970,8 +1132,22 @@ ADMIN_HTML = """
             <canvas id="tableMapCanvas" width="900" height="420" class="bg-zinc-950 rounded-xl border border-zinc-800"></canvas>
         </div>
     </div>
+    {% endif %}
 
+    {% if role == 'master' or permissions.get('view_analytics') %}
     <div id="content-analytics" class="tab-content hidden space-y-6">
+        <div class="flex justify-between items-center bg-zinc-900 p-4 rounded-xl border border-zinc-800 mb-2">
+            <div>
+                <h2 class="text-lg font-black text-white">Аналітика закладу</h2>
+                <p class="text-[10px] text-zinc-400 mt-0.5">Ключові показники та графіки</p>
+            </div>
+            {% if settings.gemini_enabled %}
+            <button onclick="askGemini()" id="btn-ask-gemini" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2 rounded-xl flex items-center gap-2 shadow-lg transition-all">
+                <i class="fas fa-robot"></i> Аналізувати з Gemini
+            </button>
+            {% endif %}
+        </div>
+        
         <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-2">
             <div class="admin-card rounded-2xl p-4 flex flex-col justify-center text-center">
                 <span class="text-[10px] text-zinc-500 uppercase font-black">Загальна Виручка</span>
@@ -1002,12 +1178,16 @@ ADMIN_HTML = """
             </div>
         </div>
     </div>
+    {% endif %}
 
+    {% if role == 'master' or permissions.get('view_reviews') %}
     <div id="content-reviews" class="tab-content hidden space-y-4">
         <h2 class="text-lg font-black uppercase tracking-wider text-zinc-300">Відгуки Гостей</h2>
         <div class="grid grid-cols-1 md:grid-cols-3 xl:grid-cols-4 gap-4" id="admin-reviews-list"></div>
     </div>
+    {% endif %}
 
+    {% if role == 'master' or permissions.get('view_archive') %}
     <div id="content-archive" class="tab-content hidden space-y-6">
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div class="admin-card rounded-2xl p-5">
@@ -1020,6 +1200,74 @@ ADMIN_HTML = """
             </div>
         </div>
     </div>
+    {% endif %}
+
+    {% if role == 'master' %}
+    <div id="content-settings" class="tab-content hidden space-y-6">
+        <h2 class="text-lg font-black text-white mb-4">Системні Налаштування</h2>
+        
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="admin-card p-5 rounded-2xl flex flex-col gap-4">
+                <h3 class="text-sm text-indigo-400 font-black uppercase border-b border-zinc-800 pb-2">Налаштування Gemini AI</h3>
+                
+                <label class="flex items-center gap-3 cursor-pointer">
+                    <input type="checkbox" id="setting-gemini-enabled" class="rounded bg-zinc-950 border-zinc-700 text-indigo-600 focus:ring-0 w-4 h-4" {% if settings.gemini_enabled %}checked{% endif %}>
+                    <span class="text-xs font-bold text-zinc-300">Увімкнути Gemini Агента</span>
+                </label>
+                
+                <div>
+                    <label class="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Токен Gemini API (Google AI Studio)</label>
+                    <input type="text" id="setting-gemini-token" value="{{ settings.gemini_token }}" placeholder="Введіть API токен..." class="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-zinc-200 text-xs focus:outline-none focus:border-indigo-500">
+                </div>
+                
+                <button onclick="saveSystemSettings()" class="bg-indigo-600 hover:bg-indigo-500 px-4 py-3 rounded-xl text-white font-bold text-xs transition-all w-max mt-auto">Зберегти конфігурацію</button>
+            </div>
+
+            <div class="admin-card p-5 rounded-2xl">
+                <h3 class="text-sm text-emerald-400 font-black uppercase border-b border-zinc-800 pb-2 mb-4">Керування Користувачами</h3>
+                
+                <div class="mb-4 bg-zinc-900 border border-zinc-800 p-4 rounded-xl">
+                    <input type="hidden" id="user-original-pw">
+                    <div class="mb-3">
+                        <label class="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Пароль користувача (для входу)</label>
+                        <input type="text" id="user-pw" placeholder="Створіть пароль..." class="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-2.5 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500">
+                    </div>
+                    
+                    <p class="text-[10px] font-bold text-zinc-500 uppercase mb-2">Права доступу (Вкладки)</p>
+                    <div class="grid grid-cols-2 gap-2 text-xs text-zinc-300 mb-4">
+                        <label class="flex items-center gap-2"><input type="checkbox" id="perm-view_orders" class="rounded bg-zinc-950 border-zinc-700 text-emerald-500"> Замовлення</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" id="perm-view_menu" class="rounded bg-zinc-950 border-zinc-700 text-emerald-500"> Меню</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" id="perm-view_monitoring" class="rounded bg-zinc-950 border-zinc-700 text-emerald-500"> Екрани (Live)</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" id="perm-view_map" class="rounded bg-zinc-950 border-zinc-700 text-emerald-500"> Карта</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" id="perm-view_analytics" class="rounded bg-zinc-950 border-zinc-700 text-emerald-500"> Аналітика</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" id="perm-view_reviews" class="rounded bg-zinc-950 border-zinc-700 text-emerald-500"> Відгуки</label>
+                        <label class="flex items-center gap-2"><input type="checkbox" id="perm-view_archive" class="rounded bg-zinc-950 border-zinc-700 text-emerald-500"> Архів</label>
+                    </div>
+                    
+                    <div class="flex gap-2">
+                        <button onclick="saveUser()" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl py-2.5 text-xs font-bold transition-all">Створити / Зберегти</button>
+                        <button onclick="resetUserForm()" class="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-xl py-2.5 text-xs font-bold transition-all">Очистити</button>
+                    </div>
+                </div>
+
+                <div id="settings-users-list" class="space-y-2 max-h-[250px] overflow-y-auto pr-1 hide-scroll">
+                    </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <div id="gemini-modal" class="draggable-window gemini-resizer hidden bg-zinc-950 border border-indigo-500 rounded-xl flex flex-col" style="top: 20%; left: 30%; width: 500px; height: 400px;">
+        <div id="gemini-modal-header" class="bg-zinc-900 border-b border-zinc-800 p-2.5 flex justify-between items-center drag-header select-none">
+            <div class="flex items-center gap-2">
+                <i class="fas fa-robot text-indigo-400"></i>
+                <span class="text-xs font-black text-zinc-200 uppercase tracking-widest">Gemini Агент Аналітики</span>
+            </div>
+            <button onclick="closeGeminiModal()" class="text-zinc-500 hover:text-white font-bold bg-zinc-800 px-2 py-1 rounded-lg text-xs"><i class="fas fa-times"></i></button>
+        </div>
+        <div class="flex-1 overflow-auto p-4 bg-black/50 hide-scroll" id="gemini-suggestions-list">
+            </div>
+    </div>
 
     <div id="review-orders-modal" class="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
         <div class="bg-zinc-950 border border-zinc-800 p-5 rounded-2xl w-full max-w-sm flex flex-col max-h-[80vh]">
@@ -1031,7 +1279,7 @@ ADMIN_HTML = """
         </div>
     </div>
 
-    <div id="floating-stream-window" class="draggable-window hidden bg-zinc-950 border-2 border-indigo-500 rounded-2xl p-3 shadow-2xl w-full max-w-[640px] h-[400px] flex flex-col">
+    <div id="floating-stream-window" class="draggable-window hidden bg-zinc-950 border border-indigo-500 rounded-2xl p-3 w-full max-w-[640px] h-[400px] flex flex-col" style="box-shadow: 0 25px 50px -12px rgba(79, 70, 229, 0.25);">
         <div id="floating-stream-header" class="flex justify-between items-center bg-zinc-900 p-2 rounded-xl border border-zinc-800 mb-2 drag-header select-none">
             <span id="floating-stream-title" class="text-xs font-black text-indigo-400 uppercase tracking-widest">Камера клієнта: Стіл #</span>
             <div class="flex gap-2">
@@ -1057,6 +1305,12 @@ ADMIN_HTML = """
     </div>
 
     <script>
+        // Ініціалізація даних з Flask (Jinja2)
+        let systemUsers = [];
+        {% if role == 'master' %}
+        systemUsers = {{ users_json|safe }};
+        {% endif %}
+
         let modalCallback = null;
 
         function showAlert(message, title = "Сповіщення") {
@@ -1088,13 +1342,22 @@ ADMIN_HTML = """
             document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
             document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); b.classList.add('text-zinc-400'); });
             
-            document.getElementById(`content-${tabId}`).classList.remove('hidden');
+            const contentBlock = document.getElementById(`content-${tabId}`);
+            if (contentBlock) contentBlock.classList.remove('hidden');
+            
             const btn = document.getElementById(`tab-${tabId}`);
-            btn.classList.add('active'); btn.classList.remove('text-zinc-400');
+            if (btn) { btn.classList.add('active'); btn.classList.remove('text-zinc-400'); }
 
             if (tabId === 'map') { drawTableMap(); }
             if (tabId === 'monitoring') { renderDevices(); }
+            if (tabId === 'settings') { renderUsersList(); }
         }
+
+        // Автовибір першої доступної вкладки
+        window.addEventListener('DOMContentLoaded', () => {
+            const firstTab = document.querySelector('.tab-btn');
+            if (firstTab) firstTab.click();
+        });
 
         // ПОВНОЕКРАННИЙ РЕЖИМ СТРИМУ
         function toggleFullscreenStream() {
@@ -1189,28 +1452,33 @@ ADMIN_HTML = """
         });
 
         socket.on('analytics_sync', (data) => {
-            document.getElementById('stat-revenue').innerText = `${data.total_revenue} ₴`;
-            document.getElementById('stat-active').innerText = `${data.active_orders} шт`;
-            document.getElementById('stat-rating').innerText = `${data.avg_rating}`;
-            document.getElementById('stat-online').innerText = `${data.devices_online}`;
+            const r = document.getElementById('stat-revenue');
+            if(r) {
+                r.innerText = `${data.total_revenue} ₴`;
+                document.getElementById('stat-active').innerText = `${data.active_orders} шт`;
+                document.getElementById('stat-rating').innerText = `${data.avg_rating}`;
+                document.getElementById('stat-online').innerText = `${data.devices_online}`;
 
-            const topList = document.getElementById('top-sales-list');
-            if (data.top_items && data.top_items.length > 0) {
-                topList.innerHTML = data.top_items.map((i, idx) => `
-                    <div class="flex justify-between items-center bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-xs">
-                        <div><span class="text-zinc-500 font-black mr-2">#${idx+1}</span><span class="text-zinc-200 font-bold">${i.name}</span></div>
-                        <span class="text-indigo-400 font-black bg-indigo-500/10 px-2 py-1 rounded-lg">${i.qty} шт</span>
-                    </div>`).join('');
-                    
-                updateChart(data.top_items);
-            } else {
-                topList.innerHTML = '<p class="text-zinc-500 text-xs">Немає закритих замовлень для формування статистики</p>';
-                if (salesChart) { salesChart.destroy(); salesChart = null; }
+                const topList = document.getElementById('top-sales-list');
+                if (data.top_items && data.top_items.length > 0) {
+                    topList.innerHTML = data.top_items.map((i, idx) => `
+                        <div class="flex justify-between items-center bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-xs">
+                            <div><span class="text-zinc-500 font-black mr-2">#${idx+1}</span><span class="text-zinc-200 font-bold">${i.name}</span></div>
+                            <span class="text-indigo-400 font-black bg-indigo-500/10 px-2 py-1 rounded-lg">${i.qty} шт</span>
+                        </div>`).join('');
+                        
+                    updateChart(data.top_items);
+                } else {
+                    topList.innerHTML = '<p class="text-zinc-500 text-xs">Немає закритих замовлень для формування статистики</p>';
+                    if (salesChart) { salesChart.destroy(); salesChart = null; }
+                }
             }
         });
 
         function updateChart(topItems) {
-            const ctx = document.getElementById('salesChart').getContext('2d');
+            const ctxElem = document.getElementById('salesChart');
+            if (!ctxElem) return;
+            const ctx = ctxElem.getContext('2d');
             const labels = topItems.map(i => i.name);
             const data = topItems.map(i => i.qty);
 
@@ -1252,6 +1520,8 @@ ADMIN_HTML = """
             const cookingBox = document.getElementById('queue-cooking');
             const readyBox = document.getElementById('queue-ready');
             
+            if(!pendingBox) return;
+
             pendingBox.innerHTML = ''; cookingBox.innerHTML = ''; readyBox.innerHTML = '';
             let cP = 0, cC = 0, cR = 0;
 
@@ -1360,8 +1630,10 @@ ADMIN_HTML = """
         }
 
         function resetMenuForm() { 
-            document.getElementById('menu-form').reset(); 
-            document.getElementById('menu-id').value = ''; 
+            const form = document.getElementById('menu-form');
+            if(form) form.reset(); 
+            const idInput = document.getElementById('menu-id');
+            if(idInput) idInput.value = ''; 
             const ind = document.getElementById('file-name-indicator');
             if(ind) { ind.innerText = 'Файл не обрано'; ind.className = 'text-[9px] text-zinc-600 truncate max-w-[200px]'; document.getElementById('drop-icon').className = "fas fa-cloud-upload-alt text-lg text-zinc-500"; }
         }
@@ -1373,16 +1645,19 @@ ADMIN_HTML = """
             if(tablesCount < 1) tablesCount = 1;
             localStorage.setItem('nexus_tables_count', tablesCount);
             
-            document.getElementById('tables-count-display-monitor').innerText = tablesCount;
-            document.getElementById('tables-count-display-map').innerText = tablesCount;
+            const tMon = document.getElementById('tables-count-display-monitor');
+            const tMap = document.getElementById('tables-count-display-map');
+            if(tMon) tMon.innerText = tablesCount;
+            if(tMap) tMap.innerText = tablesCount;
             
             renderDevices();
             drawTableMap();
         }
 
         // Ініціалізація лічильників при старті
-        document.getElementById('tables-count-display-monitor').innerText = localStorage.getItem('nexus_tables_count') || '12';
-        document.getElementById('tables-count-display-map').innerText = localStorage.getItem('nexus_tables_count') || '12';
+        const storedCount = localStorage.getItem('nexus_tables_count') || '12';
+        if(document.getElementById('tables-count-display-monitor')) document.getElementById('tables-count-display-monitor').innerText = storedCount;
+        if(document.getElementById('tables-count-display-map')) document.getElementById('tables-count-display-map').innerText = storedCount;
 
         function renderDevices() {
             const container = document.getElementById('devices-container');
@@ -1504,6 +1779,7 @@ ADMIN_HTML = """
         // РЕНДЕР ВІДГУКІВ
         function renderReviews(reviews) {
             const container = document.getElementById('admin-reviews-list');
+            if(!container) return;
             if(reviews.length === 0) { container.innerHTML = `<div class="col-span-3 text-center text-zinc-500 py-6 text-xs font-bold">Немає відгуків</div>`; return; }
             container.innerHTML = reviews.map(r => {
                 let stars = ''; for(let i=1; i<=5; i++) stars += `<i class="${i<=r.rating?'fas':'far'} fa-star text-amber-500 text-[10px]"></i>`;
@@ -1583,13 +1859,13 @@ ADMIN_HTML = """
             win.style.left = '10%';
         }
 
-        function closeFloatingStream() {
-            document.getElementById('floating-stream-window').classList.add('hidden');
-        }
+        function closeFloatingStream() { document.getElementById('floating-stream-window').classList.add('hidden'); }
 
+        // ЗАГАЛЬНА ФУНКЦІЯ ПЕРЕТЯГУВАННЯ
         function initDraggableWindow(elementId, headerId) {
             const el = document.getElementById(elementId);
             const header = document.getElementById(headerId);
+            if(!el || !header) return;
             let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
             header.onmousedown = dragMouseDown;
 
@@ -1608,6 +1884,7 @@ ADMIN_HTML = """
             function closeDragElement() { document.onmouseup = null; document.onmousemove = null; }
         }
         initDraggableWindow('floating-stream-window', 'floating-stream-header');
+        initDraggableWindow('gemini-modal', 'gemini-modal-header');
 
         function updateOrderStatus(id, status) { socket.emit('order_status_update', { id, status }); }
         function deleteOrder(id) { showConfirm('Видалити замовлення?', () => { socket.emit('order_delete', { id }); }); }
@@ -1630,6 +1907,168 @@ ADMIN_HTML = """
         }
 
         function escapeHtml(str) { if(!str) return ''; return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); }
+
+        // --- ЛОГІКА НАЛАШТУВАНЬ ТА КОРИСТУВАЧІВ (Майстер-акаунт) ---
+        function saveSystemSettings() {
+            socket.emit('admin_save_settings', {
+                gemini_enabled: document.getElementById('setting-gemini-enabled').checked,
+                gemini_token: document.getElementById('setting-gemini-token').value
+            });
+            showAlert('Налаштування системи успішно збережено!');
+        }
+
+        socket.on('users_sync', (users) => {
+            systemUsers = users;
+            renderUsersList();
+            showAlert('Дані користувачів оновлено');
+            resetUserForm();
+        });
+
+        function renderUsersList() {
+            const list = document.getElementById('settings-users-list');
+            if (!list) return;
+            
+            list.innerHTML = systemUsers.map(u => {
+                const p = u.permissions || {};
+                let pLabels = [];
+                if(p.view_orders) pLabels.push('Замовлення');
+                if(p.view_menu) pLabels.push('Меню');
+                if(p.view_monitoring) pLabels.push('Live');
+                if(p.view_map) pLabels.push('Карта');
+                if(p.view_analytics) pLabels.push('Аналітика');
+                if(p.view_reviews) pLabels.push('Відгуки');
+                if(p.view_archive) pLabels.push('Архів');
+                
+                return `
+                <div class="bg-zinc-900 border border-zinc-800 p-3 rounded-xl flex justify-between items-center">
+                    <div>
+                        <div class="text-xs font-black text-emerald-400 mb-1"><i class="fas fa-key mr-1"></i> ${u.password}</div>
+                        <div class="text-[9px] text-zinc-500">${pLabels.length > 0 ? pLabels.join(', ') : 'Немає доступу'}</div>
+                    </div>
+                    <div class="flex gap-2">
+                        <button onclick='editUser(${JSON.stringify(u)})' class="text-indigo-400 text-[10px] hover:text-indigo-300"><i class="fas fa-edit"></i></button>
+                        <button onclick="deleteUser('${u.password}')" class="text-red-500 text-[10px] hover:text-red-400"><i class="fas fa-trash"></i></button>
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        function saveUser() {
+            const originalPw = document.getElementById('user-original-pw').value;
+            const newPw = document.getElementById('user-pw').value.trim();
+            if(!newPw) return showAlert('Введіть пароль!');
+            if(newPw === 'sonia') return showAlert('Пароль sonia зарезервовано системою!');
+
+            const perms = {
+                view_orders: document.getElementById('perm-view_orders').checked,
+                view_menu: document.getElementById('perm-view_menu').checked,
+                view_monitoring: document.getElementById('perm-view_monitoring').checked,
+                view_map: document.getElementById('perm-view_map').checked,
+                view_analytics: document.getElementById('perm-view_analytics').checked,
+                view_reviews: document.getElementById('perm-view_reviews').checked,
+                view_archive: document.getElementById('perm-view_archive').checked
+            };
+
+            socket.emit('admin_save_user', { original_password: originalPw, password: newPw, permissions: perms });
+        }
+
+        function editUser(user) {
+            document.getElementById('user-original-pw').value = user.password;
+            document.getElementById('user-pw').value = user.password;
+            const p = user.permissions || {};
+            document.getElementById('perm-view_orders').checked = !!p.view_orders;
+            document.getElementById('perm-view_menu').checked = !!p.view_menu;
+            document.getElementById('perm-view_monitoring').checked = !!p.view_monitoring;
+            document.getElementById('perm-view_map').checked = !!p.view_map;
+            document.getElementById('perm-view_analytics').checked = !!p.view_analytics;
+            document.getElementById('perm-view_reviews').checked = !!p.view_reviews;
+            document.getElementById('perm-view_archive').checked = !!p.view_archive;
+        }
+
+        function resetUserForm() {
+            document.getElementById('user-original-pw').value = '';
+            document.getElementById('user-pw').value = '';
+            ['orders', 'menu', 'monitoring', 'map', 'analytics', 'reviews', 'archive'].forEach(id => {
+                document.getElementById('perm-view_' + id).checked = false;
+            });
+        }
+
+        function deleteUser(pw) {
+            showConfirm(`Видалити доступ для пароля ${pw}?`, () => { socket.emit('admin_delete_user', { password: pw }); });
+        }
+
+        // --- ЛОГІКА GEMINI АГЕНТА ---
+        function askGemini() {
+            const btn = document.getElementById('btn-ask-gemini');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Аналізую...';
+            btn.disabled = true;
+            
+            socket.emit('ask_gemini');
+            
+            setTimeout(() => { btn.innerHTML = originalText; btn.disabled = false; }, 8000);
+        }
+
+        socket.on('gemini_suggestions', (suggestions) => {
+            const btn = document.getElementById('btn-ask-gemini');
+            btn.innerHTML = '<i class="fas fa-robot"></i> Аналізувати з Gemini';
+            btn.disabled = false;
+
+            const modal = document.getElementById('gemini-modal');
+            const list = document.getElementById('gemini-suggestions-list');
+            
+            if (!suggestions || suggestions.length === 0) {
+                list.innerHTML = `<div class="text-center text-zinc-500 mt-10"><i class="fas fa-check-circle text-4xl mb-3 text-emerald-500"></i><p class="text-xs">Система ідеальна, Gemini не має порад.</p></div>`;
+            } else {
+                list.innerHTML = suggestions.map((s, idx) => `
+                    <div class="bg-zinc-900 border border-zinc-800 p-3 rounded-xl mb-3 shadow-md" id="gemini-sugg-${idx}">
+                        <div class="mb-2 border-b border-zinc-800/50 pb-2">
+                            <span class="text-[10px] uppercase font-black tracking-widest text-indigo-400">Локація:</span>
+                            <span class="text-xs text-white ml-1 font-bold">${s.where}</span>
+                        </div>
+                        <div class="flex justify-between items-center mb-2 bg-black/40 p-2 rounded-lg">
+                            <div class="flex flex-col">
+                                <span class="text-[9px] text-zinc-500 uppercase tracking-widest font-black">Було</span>
+                                <span class="text-xs text-red-400 line-through">${s.what}</span>
+                            </div>
+                            <i class="fas fa-arrow-right text-zinc-600"></i>
+                            <div class="flex flex-col text-right">
+                                <span class="text-[9px] text-zinc-500 uppercase tracking-widest font-black">Стане</span>
+                                <span class="text-xs text-emerald-400 font-bold">${s.to}</span>
+                            </div>
+                        </div>
+                        <p class="text-[10px] text-zinc-400 italic mb-3"><i class="fas fa-info-circle text-zinc-500 mr-1"></i>${s.reason}</p>
+                        
+                        <div class="flex gap-2">
+                            <button onclick="applyGeminiAction(${idx}, '${s.action_type}', '${s.target_id}', '${s.field}', '${s.new_value}')" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded-lg text-[11px] font-black transition-all">Так, застосувати</button>
+                            <button onclick="document.getElementById('gemini-sugg-${idx}').remove()" class="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 py-2 rounded-lg text-[11px] font-bold transition-all">Ні, відхилити</button>
+                        </div>
+                    </div>
+                `).join('');
+            }
+            
+            modal.classList.remove('hidden');
+        });
+
+        socket.on('gemini_error', (data) => {
+            const btn = document.getElementById('btn-ask-gemini');
+            btn.innerHTML = '<i class="fas fa-robot"></i> Аналізувати з Gemini';
+            btn.disabled = false;
+            showAlert(data.msg, "Помилка Gemini");
+        });
+
+        socket.on('gemini_success', (data) => {
+            showToast(data.msg);
+        });
+
+        function closeGeminiModal() {
+            document.getElementById('gemini-modal').classList.add('hidden');
+        }
+
+        function applyGeminiAction(idx, action_type, target_id, field, new_value) {
+            document.getElementById(`gemini-sugg-${idx}`).remove();
+            socket.emit('apply_gemini_action', { action_type, target_id, field, new_value });
+        }
     </script>
 </body>
 </html>
