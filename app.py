@@ -4,6 +4,7 @@ eventlet.monkey_patch()
 import os
 import json
 import urllib.request
+import urllib.error
 from datetime import datetime, timedelta, timezone
 from bson.objectid import ObjectId
 from flask import Flask, request, render_template_string, session, redirect, url_for, jsonify
@@ -29,7 +30,12 @@ try:
             "_id": "system", 
             "gemini_enabled": False, 
             "gemini_token": "",
-            "gemini_autoreply": False
+            "gemini_token_2": "",
+            "gemini_autoreply": False,
+            "gemini_access_menu": True,
+            "gemini_access_orders": True,
+            "gemini_access_reviews": True,
+            "gemini_access_archive": False
         })
         
 except Exception as e:
@@ -39,7 +45,7 @@ active_devices = {}
 active_waiter_calls = {}
 
 # ==============================================================================
-# 2. ДОПОМІЖНІ ФУНКЦІЇ (ЧАС ТА СЕРІАЛІЗАЦІЯ)
+# 2. ДОПОМІЖНІ ФУНКЦІЇ
 # ==============================================================================
 def get_kyiv_time(): 
     return datetime.now(timezone.utc) + timedelta(hours=3)
@@ -111,6 +117,31 @@ def handle_admin_init():
     socketio.emit('archive_sync', get_archive_data(), room='admins')
     socketio.emit('analytics_sync', calculate_dashboard_stats(), room='admins')
 
+# Обгортка для запитів до Gemini із запасним токеном
+def ask_gemini_api(prompt, token1, token2=""):
+    url = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
+    payload = {"contents": [{"parts": [{"text": prompt}]}]}
+    
+    def make_request(t):
+        headers = {'Content-Type': 'application/json', 'x-goog-api-key': t.strip()}
+        req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method='POST')
+        with urllib.request.urlopen(req) as response:
+            res_data = json.loads(response.read().decode())
+            return res_data['candidates'][0]['content']['parts'][0]['text']
+
+    try:
+        if not token1: raise Exception("No primary token")
+        return make_request(token1)
+    except Exception as e:
+        print(f"Primary Gemini token failed: {e}")
+        if token2:
+            print("Trying backup token...")
+            try:
+                return make_request(token2)
+            except Exception as e2:
+                raise Exception(f"Обидва токени не спрацювали. Помилка: {e2}")
+        raise e
+
 # ==============================================================================
 # 3. МАРШРУТИ FLASK (HTTP ROUTES)
 # ==============================================================================
@@ -144,15 +175,12 @@ def login():
     error = None
     if request.method == 'POST':
         password = request.form.get('password')
-        
-        # Перевірка майстер-акаунта
         if password == "sonia":
             session['admin_logged'] = True
             session['role'] = 'master'
-            session['permissions'] = {} # Майстер має всі права автоматично
+            session['permissions'] = {}
             return redirect(url_for('admin'))
             
-        # Перевірка звичайних користувачів у БД
         user = db.users.find_one({"password": password})
         if user:
             session['admin_logged'] = True
@@ -381,25 +409,19 @@ def handle_review_add(data):
     socketio.emit('reviews_sync', get_all_reviews())
     socketio.emit('analytics_sync', calculate_dashboard_stats(), room='admins')
     
-    # Авто-відповідь від Gemini (Фоновий процес)
     settings = db.settings.find_one({"_id": "system"})
     if settings and settings.get('gemini_enabled') and settings.get('gemini_autoreply'):
-        token = settings.get('gemini_token', '').strip()
-        if token:
-            eventlet.spawn(auto_reply_to_review, str(res.inserted_id), review_data, token)
+        token1 = settings.get('gemini_token', '')
+        token2 = settings.get('gemini_token_2', '')
+        if token1 or token2:
+            eventlet.spawn(auto_reply_to_review, str(res.inserted_id), review_data, token1, token2)
 
-def auto_reply_to_review(review_id, review_data, token):
+def auto_reply_to_review(review_id, review_data, token1, token2):
     prompt = f"Користувач {review_data['name']} залишив відгук про наш заклад: '{review_data['text']}' з оцінкою {review_data['rating']} зірок. Напиши коротку, стильну та ввічливу відповідь від імені адміністрації кафе (1-2 речення). Без маркдауну."
     try:
-        url = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-        headers = {'Content-Type': 'application/json', 'x-goog-api-key': token}
-        req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method='POST')
-        with urllib.request.urlopen(req) as response:
-            res_data = json.loads(response.read().decode())
-            reply = res_data['candidates'][0]['content']['parts'][0]['text'].strip()
-            db.reviews.update_one({"_id": ObjectId(review_id)}, {"$set": {"admin_reply": reply}})
-            socketio.emit('reviews_sync', get_all_reviews())
+        reply = ask_gemini_api(prompt, token1, token2).strip()
+        db.reviews.update_one({"_id": ObjectId(review_id)}, {"$set": {"admin_reply": reply}})
+        socketio.emit('reviews_sync', get_all_reviews())
     except Exception as e:
         print("Gemini Auto-Reply Error:", e)
 
@@ -407,7 +429,7 @@ def auto_reply_to_review(review_id, review_data, token):
 def handle_reviews_delete(data):
     if session.get('admin_logged'):
         db.reviews.delete_one({"_id": ObjectId(data['id'])})
-        socketio.emit('reviews_sync', get_all_reviews(), room='admins')
+        socketio.emit('reviews_sync', get_all_reviews())
         socketio.emit('analytics_sync', calculate_dashboard_stats(), room='admins')
 
 @socketio.on('admin_clear_db')
@@ -439,14 +461,18 @@ def handle_admin_import_db(data):
             db.reviews.insert_many(data['reviews'])
         handle_admin_init()
 
-# -- SOCKET EVENTS ДЛЯ НАЛАШТУВАНЬ МАЙСТЕР-АКАУНТА ТА КОРИСТУВАЧІВ --
 @socketio.on('admin_save_settings')
 def handle_admin_save_settings(data):
     if session.get('role') == 'master':
         db.settings.update_one({"_id": "system"}, {"$set": {
             "gemini_enabled": data.get("gemini_enabled", False),
             "gemini_token": data.get("gemini_token", ""),
-            "gemini_autoreply": data.get("gemini_autoreply", False)
+            "gemini_token_2": data.get("gemini_token_2", ""),
+            "gemini_autoreply": data.get("gemini_autoreply", False),
+            "gemini_access_menu": data.get("gemini_access_menu", True),
+            "gemini_access_orders": data.get("gemini_access_orders", True),
+            "gemini_access_reviews": data.get("gemini_access_reviews", True),
+            "gemini_access_archive": data.get("gemini_access_archive", False)
         }}, upsert=True)
 
 @socketio.on('admin_save_user')
@@ -455,84 +481,85 @@ def handle_admin_save_user(data):
         original_pw = data.get('original_password')
         new_pw = data.get('password')
         perms = data.get('permissions', {})
-        
         if original_pw:
             db.users.update_one({"password": original_pw}, {"$set": {"password": new_pw, "permissions": perms}})
         else:
             if not db.users.find_one({"password": new_pw}) and new_pw != 'sonia':
                 db.users.insert_one({"password": new_pw, "permissions": perms})
-        
         users = list(db.users.find({}, {'_id': 0}))
         socketio.emit('users_sync', users, room=request.sid)
 
 @socketio.on('admin_delete_user')
 def handle_admin_delete_user(data):
     if session.get('role') == 'master':
-        pw = data.get('password')
-        db.users.delete_one({"password": pw})
+        db.users.delete_one({"password": data.get('password')})
         users = list(db.users.find({}, {'_id': 0}))
         socketio.emit('users_sync', users, room=request.sid)
 
-# -- GEMINI CHAT INTEGRATION --
+# -- GEMINI CHAT INTEGRATION (DYNAMIC CONTEXT & HIGHLIGHTS) --
 @socketio.on('chat_gemini')
 def handle_chat_gemini(data):
     if not session.get('admin_logged'): return
     
-    settings = db.settings.find_one({"_id": "system"})
-    if not settings or not settings.get('gemini_enabled') or not settings.get('gemini_token'):
+    settings = db.settings.find_one({"_id": "system"}) or {}
+    if not settings.get('gemini_enabled') or (not settings.get('gemini_token') and not settings.get('gemini_token_2')):
         socketio.emit('gemini_chat_error', {'msg': 'Gemini не увімкнено або відсутній токен у налаштуваннях.'}, room=request.sid)
         return
         
-    token = settings['gemini_token'].strip()
     user_msg = data.get('message', '')
-    
     stats = calculate_dashboard_stats()
-    menu = get_all_menu()
-    global_orders = list(db.orders.find())
     
-    # Формування розширеного контексту для Gemini
-    menu_data = []
-    for item in menu:
-        # Рахуємо продажі для кожного товару
-        sales_count = sum(int(i.get('qty', 0)) for o in global_orders if o.get('status') == 'Закрито' for i in o.get('items', []) if i.get('id') == item['_id'])
-        
-        menu_data.append({
-            "назва": item['name'],
-            "ціна": item['price'],
-            "категорія": item['category'],
-            "продано_раз": sales_count,
-            "в_наявності": "Так" if item.get('available') else "Ні"
-        })
+    context_blocks = []
+    
+    if settings.get('gemini_access_menu'):
+        menu = get_all_menu()
+        global_orders = list(db.orders.find({"status": "Закрито"}))
+        menu_data = []
+        for item in menu:
+            sales_count = sum(int(i.get('qty', 0)) for o in global_orders for i in o.get('items', []) if i.get('id') == item['_id'])
+            menu_data.append({"id": item['_id'], "назва": item['name'], "ціна": item['price'], "категорія": item['category'], "продано_раз": sales_count})
+        context_blocks.append(f"ДАНІ ПРО ТОВАРИ:\n{json.dumps(menu_data, ensure_ascii=False)}")
+
+    if settings.get('gemini_access_orders'):
+        active_orders = [{"id": str(o['_id']), "номер": o['order_number'], "стіл": o['table'], "статус": o['status'], "сума": o['total_price']} for o in db.orders.find({"status": {"$ne": "Закрито"}})]
+        context_blocks.append(f"АКТИВНІ ЗАМОВЛЕННЯ:\n{json.dumps(active_orders, ensure_ascii=False)}")
+
+    if settings.get('gemini_access_archive'):
+        archive_orders = [{"id": str(o['_id']), "номер": o['order_number'], "сума": o['total_price']} for o in db.orders.find({"status": "Закрито"}).limit(50)]
+        context_blocks.append(f"АРХІВ ЗАМОВЛЕНЬ (останні 50):\n{json.dumps(archive_orders, ensure_ascii=False)}")
+
+    if settings.get('gemini_access_reviews'):
+        reviews = [{"id": str(r['_id']), "ім'я": r['name'], "відгук": r['text'], "оцінка": r['rating']} for r in db.reviews.find().sort("timestamp", -1).limit(30)]
+        context_blocks.append(f"ВІДГУКИ:\n{json.dumps(reviews, ensure_ascii=False)}")
+
+    full_context = "\n\n".join(context_blocks)
 
     prompt = f"""
-    Ти - елітний аналітичний ШІ-асистент Nexus Cafe. Твоє завдання - надавати глибоку та корисну аналітику бізнесу.
-    
-    ДАНІ ПРО ТОВАРИ:
-    {json.dumps(menu_data, ensure_ascii=False)}
+    Ти - елітний аналітичний ШІ-асистент Nexus Cafe.
     
     ЗАГАЛЬНА СТАТИСТИКА:
     {json.dumps(stats, ensure_ascii=False)}
     
+    {full_context}
+    
     ЗАПИТ КОРИСТУВАЧА: {user_msg}
     
-    ТВОЄ ЗАВДАННЯ ТА ПРАВИЛА ФОРМАТУВАННЯ:
-    1. Надай детальну аналітику: що продається краще, які є просідання, що можна покращити.
-    2. Використовуй Markdown для форматування тексту (списки, абзаци).
-    3. ОБОВ'ЯЗКОВО виділяй жирним шрифтом (**ось так**) ключові показники, назви страв, проблеми та рішення. Цей текст буде підсвічено неоном в інтерфейсі.
-    4. Роби відповідь чіткою, професійною, але структурованою. Запропонуй 2-3 конкретні ідеї для оптимізації прибутку або меню.
+    ТВОЄ ЗАВДАННЯ ТА ПРАВИЛА:
+    1. Надай детальну аналітику.
+    2. Використовуй Markdown. Виділяй жирним шрифтом (**текст**) ключові слова - вони будуть світитися неоном.
+    3. ІНТЕРАКТИВНІСТЬ: Якщо ти згадуєш конкретне замовлення або відгук, ТИ ЗОБОВ'ЯЗАНИЙ підсвітити його в інтерфейсі адміна!
+       Для цього додай у свій текст прихований тег:
+       - Для замовлення: [HIGHLIGHT_ORDER:тут_id_замовлення] (наприклад, [HIGHLIGHT_ORDER:65f1a2...])
+       - Для відгуку: [HIGHLIGHT_REVIEW:тут_id_відгуку]
+       Система сама виріже цей тег і змусить блок моргати на екрані користувача.
     """
+    
     try:
-        url = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
-        payload = {"contents": [{"parts": [{"text": prompt}]}]}
-        headers = {'Content-Type': 'application/json', 'x-goog-api-key': token}
-        req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method='POST')
-        
-        with urllib.request.urlopen(req) as response:
-            res_data = json.loads(response.read().decode())
-            reply = res_data['candidates'][0]['content']['parts'][0]['text']
-            socketio.emit('gemini_chat_reply', {'msg': reply}, room=request.sid)
+        reply = ask_gemini_api(prompt, settings.get('gemini_token', ''), settings.get('gemini_token_2', ''))
+        socketio.emit('gemini_chat_reply', {'msg': reply}, room=request.sid)
     except Exception as e:
-        socketio.emit('gemini_chat_error', {'msg': f'Помилка підключення до Gemini API: {str(e)}'}, room=request.sid)
+        socketio.emit('gemini_chat_error', {'msg': str(e)}, room=request.sid)
+
 
 # ==============================================================================
 # 5. ШАБЛОНИ КРАСИВОГО КІБЕР-ІНТЕРФЕЙСУ (HTML/JS)
@@ -552,57 +579,26 @@ CUSTOMER_HTML = """
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        /* CSS Variables для тем */
         :root {
-            --bg-base: #09090b;
-            --bg-panel: #18181b;
-            --bg-header: rgba(9, 9, 11, 0.95);
-            --border-color: #27272a;
-            --text-base: #f4f4f5;
-            --text-muted: #a1a1aa;
-            --accent: #4f46e5;
+            --bg-base: #09090b; --bg-panel: #18181b; --bg-header: rgba(9, 9, 11, 0.95);
+            --border-color: #27272a; --text-base: #f4f4f5; --text-muted: #a1a1aa; --accent: #4f46e5;
         }
-        [data-theme="light"] {
-            --bg-base: #f8fafc;
-            --bg-panel: #ffffff;
-            --bg-header: rgba(248, 250, 252, 0.95);
-            --border-color: #e2e8f0;
-            --text-base: #0f172a;
-            --text-muted: #64748b;
-            --accent: #2563eb;
-        }
-        [data-theme="wood"] {
-            --bg-base: #292524;
-            --bg-panel: #44403c;
-            --bg-header: rgba(41, 37, 36, 0.95);
-            --border-color: #57534e;
-            --text-base: #fef3c7;
-            --text-muted: #d6d3d1;
-            --accent: #d97706;
-        }
-        [data-theme="sakura"] {
-            --bg-base: #2e1065;
-            --bg-panel: #4c1d95;
-            --bg-header: rgba(46, 16, 101, 0.95);
-            --border-color: #6d28d9;
-            --text-base: #fdf4ff;
-            --text-muted: #d8b4fe;
-            --accent: #ec4899;
-        }
+        [data-theme="light"] { --bg-base: #f8fafc; --bg-panel: #ffffff; --bg-header: rgba(248, 250, 252, 0.95); --border-color: #e2e8f0; --text-base: #0f172a; --text-muted: #64748b; --accent: #2563eb; }
+        [data-theme="wood"] { --bg-base: #292524; --bg-panel: #44403c; --bg-header: rgba(41, 37, 36, 0.95); --border-color: #57534e; --text-base: #fef3c7; --text-muted: #d6d3d1; --accent: #d97706; }
+        [data-theme="sakura"] { --bg-base: #2e1065; --bg-panel: #4c1d95; --bg-header: rgba(46, 16, 101, 0.95); --border-color: #6d28d9; --text-base: #fdf4ff; --text-muted: #d8b4fe; --accent: #ec4899; }
 
-        body { background-color: var(--bg-base) !important; color: var(--text-base) !important; transition: background-color 0.5s ease, color 0.5s ease; font-family: system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
-        .bg-zinc-950, .bg-zinc-900, .glass-card { background-color: var(--bg-panel) !important; transition: background-color 0.5s ease; }
-        header { background-color: var(--bg-header) !important; transition: background-color 0.5s ease; }
-        .border-zinc-800, .border-zinc-900 { border-color: var(--border-color) !important; transition: border-color 0.5s ease; }
-        .text-zinc-100, .text-zinc-200, .text-zinc-300 { color: var(--text-base) !important; transition: color 0.5s ease; }
-        .text-zinc-400, .text-zinc-500, .text-zinc-600 { color: var(--text-muted) !important; transition: color 0.5s ease; }
-        .bg-indigo-600 { background-color: var(--accent) !important; transition: background-color 0.5s ease; color: #ffffff !important; }
-        .text-indigo-400, .text-indigo-500 { color: var(--accent) !important; transition: color 0.5s ease; }
-        .border-indigo-500, .border-indigo-500\\/20, .border-indigo-500\\/30 { border-color: var(--accent) !important; transition: border-color 0.5s ease; }
+        body { background-color: var(--bg-base) !important; color: var(--text-base) !important; transition: all 0.5s ease; font-family: system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
+        .bg-zinc-950, .bg-zinc-900, .glass-card { background-color: var(--bg-panel) !important; transition: all 0.5s ease; }
+        header { background-color: var(--bg-header) !important; transition: all 0.5s ease; }
+        .border-zinc-800, .border-zinc-900 { border-color: var(--border-color) !important; transition: all 0.5s ease; }
+        .text-zinc-100, .text-zinc-200, .text-zinc-300 { color: var(--text-base) !important; transition: all 0.5s ease; }
+        .text-zinc-400, .text-zinc-500, .text-zinc-600 { color: var(--text-muted) !important; transition: all 0.5s ease; }
+        .bg-indigo-600 { background-color: var(--accent) !important; transition: all 0.5s ease; color: #ffffff !important; }
+        .text-indigo-400, .text-indigo-500 { color: var(--accent) !important; transition: all 0.5s ease; }
+        .border-indigo-500, .border-indigo-500\\/20, .border-indigo-500\\/30 { border-color: var(--accent) !important; transition: all 0.5s ease; }
 
         .cat-btn { background-color: var(--bg-panel) !important; color: var(--text-muted) !important; border-color: var(--border-color) !important; }
         .cat-btn.active { background-color: var(--accent) !important; color: #ffffff !important; border-color: var(--accent) !important; }
-
         .hide-scroll::-webkit-scrollbar { display: none; }
         .glass-card { border: 1px solid var(--border-color); }
         .glass-card:hover { border-color: var(--accent); box-shadow: 0 0 15px rgba(0,0,0,0.1); }
@@ -626,8 +622,8 @@ CUSTOMER_HTML = """
             </div>
         </div>
         <div class="flex gap-1.5">
-            <button onclick="openReviewModal()" class="bg-amber-500/10 active:bg-amber-500/20 text-amber-500 border border-amber-500/20 px-3 py-2 rounded-xl font-bold text-[11px] transition-all flex items-center gap-1.5">
-                <i class="fas fa-star"></i> Відгук
+            <button onclick="openModal('all-reviews-modal')" class="bg-indigo-500/10 active:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 px-3 py-2 rounded-xl font-bold text-[11px] transition-all flex items-center gap-1.5">
+                <i class="fas fa-comments"></i> Відгуки
             </button>
             <button onclick="callWaiter()" class="bg-indigo-500/10 active:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 px-3 py-2 rounded-xl font-bold text-[11px] transition-all flex items-center gap-1.5">
                 <i class="fas fa-concierge-bell"></i> Офіціант
@@ -712,7 +708,22 @@ CUSTOMER_HTML = """
         </div>
     </div>
 
-    <div id="review-modal" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-md hidden items-center justify-center p-4">
+    <div id="all-reviews-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex-col justify-end">
+        <div class="bg-zinc-950 border-t border-zinc-800 rounded-t-[2rem] h-[85vh] flex flex-col p-5">
+            <div class="flex justify-between items-center mb-3">
+                <h2 class="text-lg font-black flex items-center gap-2"><i class="fas fa-star text-amber-500"></i> Відгуки гостей</h2>
+                <button onclick="closeModal('all-reviews-modal')" class="text-zinc-500 p-2"><i class="fas fa-times text-lg"></i></button>
+            </div>
+            
+            <button onclick="openModal('review-modal')" class="w-full bg-amber-500/10 text-amber-500 border border-amber-500/30 p-3 rounded-xl font-bold text-xs mb-4 flex items-center justify-center gap-2">
+                <i class="fas fa-pen"></i> Залишити свій відгук
+            </button>
+            
+            <div id="customer-reviews-list" class="flex-1 overflow-y-auto space-y-3 pr-1 hide-scroll"></div>
+        </div>
+    </div>
+
+    <div id="review-modal" class="fixed inset-0 z-[60] bg-black/90 backdrop-blur-md hidden items-center justify-center p-4">
         <div class="bg-zinc-950 border border-zinc-800 p-5 rounded-2xl w-full max-w-sm">
             <h3 class="text-base font-black text-center mb-1">Оцініть наш заклад</h3>
             <p class="text-center text-[10px] text-zinc-500 mb-3">Натисніть на зірку</p>
@@ -749,9 +760,7 @@ CUSTOMER_HTML = """
             if (container.classList.contains('opacity-0')) {
                 container.classList.remove('opacity-0', 'pointer-events-none', 'translate-x-4');
                 container.classList.add('opacity-100', 'translate-x-0');
-            } else {
-                closeThemeMenu();
-            }
+            } else { closeThemeMenu(); }
         }
 
         function closeThemeMenu() {
@@ -765,9 +774,7 @@ CUSTOMER_HTML = """
         document.addEventListener('click', (e) => {
             const btn = document.getElementById('theme-toggle-btn');
             const circles = document.getElementById('theme-circles');
-            if (btn && circles && !btn.contains(e.target) && !circles.contains(e.target)) {
-                closeThemeMenu();
-            }
+            if (btn && circles && !btn.contains(e.target) && !circles.contains(e.target)) closeThemeMenu();
         });
 
         function setTheme(theme) {
@@ -782,8 +789,33 @@ CUSTOMER_HTML = """
             sendLiveTelemetry();
         });
 
-        socket.on('menu_sync', (data) => {
-            menuItems = data; renderCategories(); renderMenu(); updateCartUI();
+        socket.on('menu_sync', (data) => { menuItems = data; renderCategories(); renderMenu(); updateCartUI(); });
+
+        // Синхронізація відгуків для клієнта
+        socket.on('reviews_sync', (reviews) => {
+            const list = document.getElementById('customer-reviews-list');
+            if(!list) return;
+            if(reviews.length === 0) { list.innerHTML = `<div class="text-center text-zinc-500 py-6 text-xs font-bold">Ще немає відгуків. Будьте першими!</div>`; return; }
+            
+            list.innerHTML = reviews.map(r => {
+                let stars = ''; for(let i=1; i<=5; i++) stars += `<i class="${i<=r.rating?'fas':'far'} fa-star text-amber-500 text-[10px]"></i>`;
+                let adminReplyHtml = r.admin_reply ? `
+                    <div class="mt-2 bg-indigo-900/30 border border-indigo-500/30 p-2.5 rounded-xl relative">
+                        <div class="absolute -top-2 left-3 bg-zinc-950 border border-indigo-500/30 px-1.5 rounded text-[8px] font-black text-indigo-400 uppercase tracking-widest"><i class="fas fa-robot"></i> Адміністрація</div>
+                        <p class="text-[11px] text-zinc-300 font-medium mt-1">${r.admin_reply}</p>
+                    </div>` : '';
+
+                return `
+                    <div class="bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl">
+                        <div class="flex justify-between items-center mb-1">
+                            <h4 class="font-black text-xs text-zinc-200">${r.name}</h4>
+                            <span class="text-[9px] text-zinc-500 font-bold">${r.time_str}</span>
+                        </div>
+                        <div class="mb-2">${stars}</div>
+                        <p class="text-[11px] text-zinc-300 font-medium leading-relaxed">${r.text || 'Оцінка без коментаря'}</p>
+                        ${adminReplyHtml}
+                    </div>`;
+            }).join('');
         });
 
         socket.on('order_status_update_client', (data) => {
@@ -912,10 +944,7 @@ CUSTOMER_HTML = """
             });
         }
 
-        function openMyOrdersModal() {
-            openModal('my-orders-modal');
-            loadMyOrders();
-        }
+        function openMyOrdersModal() { openModal('my-orders-modal'); loadMyOrders(); }
 
         function loadMyOrders() {
             const list = document.getElementById('my-orders-list');
@@ -985,53 +1014,31 @@ ADMIN_HTML = """
         .draggable-window { position: absolute; z-index: 100; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); transition: height 0.3s ease, min-height 0.3s ease; }
         .drag-header { cursor: move; }
         
-        .gemini-resizer { 
-            resize: both; 
-            overflow: hidden; 
-            min-width: 350px; 
-            min-height: 450px; 
-            max-width: 90vw; 
-            max-height: 90vh;
-        }
+        .gemini-resizer { resize: both; overflow: hidden; min-width: 350px; min-height: 450px; max-width: 90vw; max-height: 90vh; }
+        .gemini-minimized { height: 46px !important; min-height: 46px !important; resize: none !important; overflow: hidden !important; padding-bottom: 0 !important; border-bottom: none !important; }
 
-        .gemini-minimized {
-            height: 46px !important;
-            min-height: 46px !important;
-            resize: none !important;
-            overflow: hidden !important;
-            padding-bottom: 0 !important;
-            border-bottom: none !important;
-        }
-
-        /* Неонова вібрація для Gemini Markdown */
-        .gemini-msg strong {
-            color: #d8b4fe;
-            text-shadow: 0 0 5px #c084fc, 0 0 10px #a855f7;
-            animation: neon-pulse 1.5s infinite alternate;
-            font-weight: 900;
-        }
-        @keyframes neon-pulse {
-            from { text-shadow: 0 0 2px #c084fc, 0 0 5px #a855f7; }
-            to { text-shadow: 0 0 8px #c084fc, 0 0 15px #a855f7, 0 0 20px #9333ea; }
-        }
+        .gemini-msg strong { color: #d8b4fe; text-shadow: 0 0 5px #c084fc, 0 0 10px #a855f7; animation: neon-pulse 1.5s infinite alternate; font-weight: 900; }
+        @keyframes neon-pulse { from { text-shadow: 0 0 2px #c084fc, 0 0 5px #a855f7; } to { text-shadow: 0 0 8px #c084fc, 0 0 15px #a855f7, 0 0 20px #9333ea; } }
         .gemini-msg ul { list-style-type: disc; padding-left: 1.5rem; margin-top: 0.5rem; margin-bottom: 0.5rem; }
         .gemini-msg ol { list-style-type: decimal; padding-left: 1.5rem; margin-top: 0.5rem; margin-bottom: 0.5rem; }
         .gemini-msg li { margin-bottom: 0.25rem; }
         .gemini-msg p { margin-bottom: 0.5rem; }
         .gemini-msg h1, .gemini-msg h2, .gemini-msg h3 { font-weight: 900; margin-top: 1rem; margin-bottom: 0.5rem; color: #a5b4fc; }
 
-        /* Анімація завантаження Gemini */
         .gemini-typing { display: flex; gap: 5px; align-items: center; padding: 12px; justify-content: center; }
-        .gemini-typing span {
-            width: 8px; height: 8px; background: #818cf8; border-radius: 50%;
-            animation: bounce 1.4s infinite ease-in-out both;
-        }
+        .gemini-typing span { width: 8px; height: 8px; background: #818cf8; border-radius: 50%; animation: bounce 1.4s infinite ease-in-out both; }
         .gemini-typing span:nth-child(1) { animation-delay: -0.32s; }
         .gemini-typing span:nth-child(2) { animation-delay: -0.16s; }
-        @keyframes bounce {
-            0%, 80%, 100% { transform: scale(0); background: #818cf8; }
-            40% { transform: scale(1); background: #c084fc; box-shadow: 0 0 10px #c084fc; }
+        @keyframes bounce { 0%, 80%, 100% { transform: scale(0); background: #818cf8; } 40% { transform: scale(1); background: #c084fc; box-shadow: 0 0 10px #c084fc; } }
+
+        /* Клас для підсвічування DOM елементів від ШІ */
+        .ai-highlight-glow {
+            box-shadow: 0 0 25px 5px #a855f7, inset 0 0 15px #a855f7 !important;
+            border-color: #a855f7 !important;
+            animation: ai-blink 0.5s infinite alternate;
+            transition: all 0.3s ease;
         }
+        @keyframes ai-blink { from { opacity: 1; } to { opacity: 0.7; transform: scale(1.02); } }
     </style>
 </head>
 <body class="p-4 md:p-6">
@@ -1269,19 +1276,34 @@ ADMIN_HTML = """
             <div class="admin-card p-5 rounded-2xl flex flex-col gap-4">
                 <h3 class="text-sm text-indigo-400 font-black uppercase border-b border-zinc-800 pb-2">Налаштування Gemini AI</h3>
                 
-                <label class="flex items-center gap-3 cursor-pointer">
-                    <input type="checkbox" id="setting-gemini-enabled" class="rounded bg-zinc-950 border-zinc-700 text-indigo-600 focus:ring-0 w-4 h-4" {% if settings.gemini_enabled %}checked{% endif %}>
-                    <span class="text-xs font-bold text-zinc-300">Увімкнути Gemini Агента</span>
-                </label>
+                <div class="flex items-center justify-between">
+                    <label class="flex items-center gap-3 cursor-pointer">
+                        <input type="checkbox" id="setting-gemini-enabled" class="rounded bg-zinc-950 border-zinc-700 text-indigo-600 focus:ring-0 w-4 h-4" {% if settings.gemini_enabled %}checked{% endif %}>
+                        <span class="text-xs font-bold text-zinc-300">Увімкнути Gemini Агента</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox" id="setting-gemini-autoreply" class="rounded bg-zinc-950 border-zinc-700 text-emerald-500 focus:ring-0 w-4 h-4" {% if settings.gemini_autoreply %}checked{% endif %}>
+                        <span class="text-[10px] font-bold text-emerald-400">Авто-відповідь</span>
+                    </label>
+                </div>
                 
-                <label class="flex items-center gap-3 cursor-pointer mt-1">
-                    <input type="checkbox" id="setting-gemini-autoreply" class="rounded bg-zinc-950 border-zinc-700 text-emerald-500 focus:ring-0 w-4 h-4" {% if settings.gemini_autoreply %}checked{% endif %}>
-                    <span class="text-xs font-bold text-zinc-300">Автоматична відповідь на відгуки (Gemini)</span>
-                </label>
+                <div class="space-y-2 mb-2 p-3 bg-zinc-900 border border-zinc-800 rounded-xl">
+                    <span class="text-[9px] font-black uppercase tracking-widest text-zinc-500 block mb-1">Доступ до даних (Контекст ШІ)</span>
+                    <label class="flex items-center gap-2 text-xs text-zinc-300"><input type="checkbox" id="gemini-acc-menu" class="rounded bg-zinc-950 border-zinc-700 text-indigo-500" {% if settings.gemini_access_menu %}checked{% endif %}> Меню та продажі</label>
+                    <label class="flex items-center gap-2 text-xs text-zinc-300"><input type="checkbox" id="gemini-acc-orders" class="rounded bg-zinc-950 border-zinc-700 text-indigo-500" {% if settings.gemini_access_orders %}checked{% endif %}> Активні замовлення</label>
+                    <label class="flex items-center gap-2 text-xs text-zinc-300"><input type="checkbox" id="gemini-acc-reviews" class="rounded bg-zinc-950 border-zinc-700 text-indigo-500" {% if settings.gemini_access_reviews %}checked{% endif %}> Відгуки клієнтів</label>
+                    <label class="flex items-center gap-2 text-xs text-zinc-300"><input type="checkbox" id="gemini-acc-archive" class="rounded bg-zinc-950 border-zinc-700 text-indigo-500" {% if settings.gemini_access_archive %}checked{% endif %}> Архів (останні 50)</label>
+                </div>
                 
-                <div class="mt-2">
-                    <label class="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Токен Gemini API (Google AI Studio)</label>
-                    <input type="text" id="setting-gemini-token" value="{{ settings.gemini_token }}" placeholder="Введіть API токен..." class="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-zinc-200 text-xs focus:outline-none focus:border-indigo-500">
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Основний Токен (Google AI Studio)</label>
+                        <input type="text" id="setting-gemini-token" value="{{ settings.gemini_token }}" placeholder="Основний API ключ..." class="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-zinc-200 text-xs focus:outline-none focus:border-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Запасний Токен (Fallback)</label>
+                        <input type="text" id="setting-gemini-token-2" value="{{ settings.gemini_token_2 }}" placeholder="Вступить в роботу, якщо 1-й не відповідає..." class="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500">
+                    </div>
                 </div>
                 
                 <button onclick="saveSystemSettings()" class="bg-indigo-600 hover:bg-indigo-500 px-4 py-3 rounded-xl text-white font-bold text-xs transition-all w-max mt-auto">Зберегти конфігурацію</button>
@@ -1335,7 +1357,7 @@ ADMIN_HTML = """
         <div id="gemini-chat-history" class="flex-1 overflow-y-auto p-4 space-y-4 hide-scroll bg-black/40">
             <div class="flex flex-col gap-1 items-start">
                 <div class="gemini-msg bg-zinc-900 border border-indigo-500/30 text-zinc-200 text-xs p-3 rounded-xl rounded-tl-none max-w-[85%] shadow-[0_0_10px_rgba(99,102,241,0.1)]">
-                    Привіт! Я твій елітний ШІ-помічник. Зможу розписати детальну аналітику, вказати на проблеми та запропонувати оптимізацію меню. Просто натисни кнопку швидкого аналізу або задай своє питання!
+                    Привіт! Я твій елітний ШІ-помічник. Можу аналізувати продажі, знаходити проблемні відгуки та підсвічувати їх прямісінько в інтерфейсі адмінки.
                 </div>
             </div>
         </div>
@@ -1348,7 +1370,7 @@ ADMIN_HTML = """
         
         <div class="p-3 bg-zinc-900 border-t border-zinc-800 flex flex-col gap-2 rounded-b-2xl" id="gemini-input-area">
             <button onclick="sendQuickAnalysis()" class="bg-indigo-600/20 text-indigo-400 border border-indigo-500/30 hover:bg-indigo-600/40 rounded-xl px-3 py-1.5 text-[10px] font-black uppercase tracking-widest transition-all w-full flex items-center justify-center gap-2">
-                <i class="fas fa-bolt text-amber-400"></i> Аналізувати поточний стан
+                <i class="fas fa-bolt text-amber-400"></i> Швидкий Аналіз Інформації
             </button>
             <div class="flex gap-2">
                 <input type="text" id="gemini-chat-input" placeholder="Напишіть запит або запитання..." class="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500" onkeypress="if(event.key === 'Enter') sendGeminiMessage()">
@@ -1559,21 +1581,11 @@ ADMIN_HTML = """
                     type: 'bar',
                     data: {
                         labels: labels,
-                        datasets: [{
-                            label: 'Продано порцій',
-                            data: data,
-                            backgroundColor: '#4f46e5',
-                            borderRadius: 6
-                        }]
+                        datasets: [{ label: 'Продано порцій', data: data, backgroundColor: '#4f46e5', borderRadius: 6 }]
                     },
                     options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: { legend: { display: false } },
-                        scales: { 
-                            y: { beginAtZero: true, grid: { color: '#27272a' } }, 
-                            x: { grid: { display: false } } 
-                        }
+                        responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
+                        scales: { y: { beginAtZero: true, grid: { color: '#27272a' } }, x: { grid: { display: false } } }
                     }
                 });
             }
@@ -1595,12 +1607,9 @@ ADMIN_HTML = """
             orders.forEach(o => {
                 if (o.status === 'Закрито') return;
                 const itemsHtml = o.items.map(i => `<div class="font-medium text-zinc-300 text-[10px] leading-tight">• ${i.name} <span class="text-indigo-400 font-bold">x${i.qty}</span></div>`).join('');
-                
                 const commentHtml = o.comment ? `<div class="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg mt-1 font-bold shadow-inner"><i class="fas fa-comment-dots"></i> ${o.comment}</div>` : '';
                 
-                let tableDisplay = o.table === 'На виніс'
-                    ? `<span class="bg-indigo-600 px-2 py-0.5 rounded text-[10px] text-white font-black shadow-lg"><i class="fas fa-shopping-bag"></i> З СОБОЮ</span>`
-                    : `<span class="bg-zinc-950 px-1.5 py-0.5 rounded text-[9px] text-zinc-400 border border-zinc-800">Стіл ${o.table}</span>`;
+                let tableDisplay = o.table === 'На виніс' ? `<span class="bg-indigo-600 px-2 py-0.5 rounded text-[10px] text-white font-black shadow-lg"><i class="fas fa-shopping-bag"></i> З СОБОЮ</span>` : `<span class="bg-zinc-950 px-1.5 py-0.5 rounded text-[9px] text-zinc-400 border border-zinc-800">Стіл ${o.table}</span>`;
                 
                 let actionBtn = '';
                 if(o.status === 'pending') { actionBtn = `<button onclick="updateOrderStatus('${o._id}', 'cooking')" class="w-full bg-amber-500 text-zinc-950 font-black p-1.5 rounded-lg mt-2 text-[10px]">Готувати</button>`; cP++; }
@@ -1608,7 +1617,7 @@ ADMIN_HTML = """
                 if(o.status === 'ready') { actionBtn = `<button onclick="updateOrderStatus('${o._id}', 'Закрито')" class="w-full bg-emerald-600 text-white font-black p-1.5 rounded-lg mt-2 text-[10px]">Оплачено / В архів</button>`; cR++; }
 
                 const card = `
-                    <div draggable="true" ondragstart="handleDragStart(event, '${o._id}')" class="bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-xs space-y-1 cursor-grab active:cursor-grabbing hover:border-indigo-500/50 transition-all select-none">
+                    <div id="order-${o._id}" draggable="true" ondragstart="handleDragStart(event, '${o._id}')" class="bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-xs space-y-1 cursor-grab active:cursor-grabbing hover:border-indigo-500/50 transition-all select-none">
                         <div class="flex justify-between items-center font-bold border-b border-zinc-800 pb-1 mb-1 pointer-events-none">
                             <span class="text-indigo-400 text-[11px]">Замовлення #${o.order_number}</span>
                             ${tableDisplay}
@@ -1643,7 +1652,6 @@ ADMIN_HTML = """
             const grid = document.getElementById('admin-menu-grid');
             if(!grid) return;
             let filtered = adminCategoryFilter === 'Всі' ? globalMenu : globalMenu.filter(i => i.category === adminCategoryFilter);
-            
             if(filtered.length === 0) { grid.innerHTML = `<div class="col-span-3 text-center text-zinc-500 py-6 text-xs font-bold">Немає страв</div>`; return; }
 
             grid.innerHTML = filtered.map(item => `
@@ -1680,41 +1688,28 @@ ADMIN_HTML = """
         }
 
         function editMenuItem(id, name, cat, price, desc, img, avail) {
-            document.getElementById('menu-id').value = id;
-            document.getElementById('menu-name').value = name;
-            document.getElementById('menu-category').value = cat;
-            document.getElementById('menu-price').value = price;
-            document.getElementById('menu-description').value = desc;
-            document.getElementById('menu-image').value = img;
+            document.getElementById('menu-id').value = id; document.getElementById('menu-name').value = name;
+            document.getElementById('menu-category').value = cat; document.getElementById('menu-price').value = price;
+            document.getElementById('menu-description').value = desc; document.getElementById('menu-image').value = img;
             document.getElementById('menu-available').checked = (avail === 'true' || avail === true);
-            
-            const ind = document.getElementById('file-name-indicator');
-            const icon = document.getElementById('drop-icon');
+            const ind = document.getElementById('file-name-indicator'); const icon = document.getElementById('drop-icon');
             if(img) { ind.innerText = 'Встановлено фото'; ind.classList.add('text-indigo-400'); icon.className = "fas fa-image text-lg text-indigo-500"; }
         }
 
         function resetMenuForm() { 
-            const form = document.getElementById('menu-form');
-            if(form) form.reset(); 
-            const idInput = document.getElementById('menu-id');
-            if(idInput) idInput.value = ''; 
+            const form = document.getElementById('menu-form'); if(form) form.reset(); 
+            const idInput = document.getElementById('menu-id'); if(idInput) idInput.value = ''; 
             const ind = document.getElementById('file-name-indicator');
             if(ind) { ind.innerText = 'Файл не обрано'; ind.className = 'text-[9px] text-zinc-600 truncate max-w-[200px]'; document.getElementById('drop-icon').className = "fas fa-cloud-upload-alt text-lg text-zinc-500"; }
         }
 
         function changeTablesCount(delta) {
-            let tablesCount = parseInt(localStorage.getItem('nexus_tables_count') || '12');
-            tablesCount += delta;
-            if(tablesCount < 1) tablesCount = 1;
-            localStorage.setItem('nexus_tables_count', tablesCount);
+            let tablesCount = parseInt(localStorage.getItem('nexus_tables_count') || '12'); tablesCount += delta;
+            if(tablesCount < 1) tablesCount = 1; localStorage.setItem('nexus_tables_count', tablesCount);
             
-            const tMon = document.getElementById('tables-count-display-monitor');
-            const tMap = document.getElementById('tables-count-display-map');
-            if(tMon) tMon.innerText = tablesCount;
-            if(tMap) tMap.innerText = tablesCount;
-            
-            renderDevices();
-            drawTableMap();
+            const tMon = document.getElementById('tables-count-display-monitor'); const tMap = document.getElementById('tables-count-display-map');
+            if(tMon) tMon.innerText = tablesCount; if(tMap) tMap.innerText = tablesCount;
+            renderDevices(); drawTableMap();
         }
 
         const storedCount = localStorage.getItem('nexus_tables_count') || '12';
@@ -1724,10 +1719,8 @@ ADMIN_HTML = """
         function renderDevices() {
             const container = document.getElementById('devices-container');
             if(!container) return;
-            
             let tablesCount = parseInt(localStorage.getItem('nexus_tables_count') || '12');
             let html = '';
-            
             for(let i = 1; i <= tablesCount; i++) {
                 let uuid = Object.keys(liveDevicesData).find(k => String(liveDevicesData[k].table) === String(i));
                 let dev = uuid ? liveDevicesData[uuid] : null;
@@ -1747,92 +1740,48 @@ ADMIN_HTML = """
                                     <div class="text-zinc-400">Скролл: <b class="text-zinc-200">${dev.scroll}%</b></div>
                                 </div>
                                 <div class="w-full h-40 bg-black rounded-xl overflow-hidden border border-zinc-800 relative cursor-pointer" onclick="openFloatingStream('${uuid}', '${i}')">
-                                    <div id="placeholder-${uuid}" class="absolute text-[10px] text-zinc-600 font-bold flex flex-col items-center gap-2 inset-0 justify-center">
-                                        <i class="fas fa-spinner fa-spin text-sm text-indigo-500"></i> Трансляція...
-                                    </div>
+                                    <div id="placeholder-${uuid}" class="absolute text-[10px] text-zinc-600 font-bold flex flex-col items-center gap-2 inset-0 justify-center"><i class="fas fa-spinner fa-spin text-sm text-indigo-500"></i> Трансляція...</div>
                                     <img id="stream-uuid-${uuid}" class="w-full h-full object-contain hidden relative z-10" src="" alt="STREAM">
                                     <div class="absolute top-2 right-2 bg-black/60 text-white px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-widest z-20"><i class="fas fa-expand mr-1"></i> Відкрити</div>
                                 </div>
                             </div>
                         </div>`;
                 } else {
-                    html += `
-                        <div class="bg-zinc-900/50 border border-zinc-800/50 p-4 rounded-2xl flex flex-col justify-center items-center h-full opacity-60">
-                            <span class="bg-zinc-800 text-zinc-500 font-black px-2.5 py-1 rounded-xl text-xs mb-2">Стіл #${i}</span>
-                            <span class="text-zinc-600 text-xs font-bold uppercase tracking-widest">Офлайн</span>
-                        </div>`;
+                    html += `<div class="bg-zinc-900/50 border border-zinc-800/50 p-4 rounded-2xl flex flex-col justify-center items-center h-full opacity-60"><span class="bg-zinc-800 text-zinc-500 font-black px-2.5 py-1 rounded-xl text-xs mb-2">Стіл #${i}</span><span class="text-zinc-600 text-xs font-bold uppercase tracking-widest">Офлайн</span></div>`;
                 }
             }
             container.innerHTML = html;
         }
 
         function drawTableMap() {
-            const canvas = document.getElementById('tableMapCanvas');
-            if(!canvas) return;
-            const ctx = canvas.getContext('2d');
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            const canvas = document.getElementById('tableMapCanvas'); if(!canvas) return;
+            const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             let tablesCount = parseInt(localStorage.getItem('nexus_tables_count') || '12');
-            const cols = 5;
-            const radius = 30;
-            const startX = 80;
-            const startY = 60;
-            const spaceX = 160;
-            const spaceY = 110;
+            const cols = 5; const radius = 30; const startX = 80; const startY = 60; const spaceX = 160; const spaceY = 110;
 
             for(let i=1; i<=tablesCount; i++) {
-                const row = Math.floor((i-1) / cols);
-                const col = (i-1) % cols;
-                const x = startX + col * spaceX;
-                const y = startY + row * spaceY;
+                const row = Math.floor((i-1) / cols); const col = (i-1) % cols;
+                const x = startX + col * spaceX; const y = startY + row * spaceY;
 
-                let isOnline = false;
-                let hasCart = false;
-                let isReady = false;
+                let isOnline = false; let hasCart = false; let isReady = false;
 
-                Object.values(liveDevicesData).forEach(d => {
-                    if(String(d.table) === String(i)) {
-                        isOnline = true;
-                        if(d.cart_total > 0) hasCart = true;
-                    }
-                });
+                Object.values(liveDevicesData).forEach(d => { if(String(d.table) === String(i)) { isOnline = true; if(d.cart_total > 0) hasCart = true; } });
+                globalOrders.forEach(o => { if(o.status !== 'Закрито' && String(o.table) === String(i)) { if(o.status === 'ready') isReady = true; } });
+
+                ctx.beginPath(); ctx.arc(x, y, radius, 0, 2 * Math.PI);
                 
-                globalOrders.forEach(o => {
-                    if(o.status !== 'Закрито' && String(o.table) === String(i)) {
-                        if(o.status === 'ready') isReady = true;
-                    }
-                });
-
-                ctx.beginPath();
-                ctx.arc(x, y, radius, 0, 2 * Math.PI);
+                if (isReady) { ctx.shadowBlur = 15; ctx.shadowColor = '#10b981'; ctx.fillStyle = 'rgba(16, 185, 129, 0.2)'; ctx.strokeStyle = '#10b981'; }
+                else if (hasCart) { ctx.shadowBlur = 15; ctx.shadowColor = '#f59e0b'; ctx.fillStyle = 'rgba(245, 158, 11, 0.2)'; ctx.strokeStyle = '#f59e0b'; }
+                else if (isOnline) { ctx.shadowBlur = 15; ctx.shadowColor = '#4f46e5'; ctx.fillStyle = 'rgba(79, 70, 229, 0.2)'; ctx.strokeStyle = '#4f46e5'; }
+                else { ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(39, 39, 42, 0.6)'; ctx.strokeStyle = '#52525b'; }
                 
-                if (isReady) {
-                    ctx.shadowBlur = 15; ctx.shadowColor = '#10b981'; ctx.fillStyle = 'rgba(16, 185, 129, 0.2)'; ctx.strokeStyle = '#10b981';
-                } else if (hasCart) {
-                    ctx.shadowBlur = 15; ctx.shadowColor = '#f59e0b'; ctx.fillStyle = 'rgba(245, 158, 11, 0.2)'; ctx.strokeStyle = '#f59e0b';
-                } else if (isOnline) {
-                    ctx.shadowBlur = 15; ctx.shadowColor = '#4f46e5'; ctx.fillStyle = 'rgba(79, 70, 229, 0.2)'; ctx.strokeStyle = '#4f46e5';
-                } else {
-                    ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(39, 39, 42, 0.6)'; ctx.strokeStyle = '#52525b';
-                }
+                ctx.lineWidth = 2; ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0; ctx.fillStyle = '#ffffff';
+                ctx.font = 'bold 12px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`${i}`, x, y);
+                ctx.font = '9px system-ui'; ctx.fillStyle = isReady ? '#10b981' : (hasCart ? '#f59e0b' : (isOnline ? '#818cf8' : '#a1a1aa'));
                 
-                ctx.lineWidth = 2;
-                ctx.fill();
-                ctx.stroke();
-
-                ctx.shadowBlur = 0;
-                ctx.fillStyle = '#ffffff';
-                ctx.font = 'bold 12px system-ui';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(`${i}`, x, y);
-
-                ctx.font = '9px system-ui';
-                ctx.fillStyle = isReady ? '#10b981' : (hasCart ? '#f59e0b' : (isOnline ? '#818cf8' : '#a1a1aa'));
                 let statusText = 'Вільний';
-                if(isReady) statusText = 'ГОТОВО';
-                else if(hasCart) statusText = 'ВИБИРАЄ';
-                else if(isOnline) statusText = 'ОНЛАЙН';
+                if(isReady) statusText = 'ГОТОВО'; else if(hasCart) statusText = 'ВИБИРАЄ'; else if(isOnline) statusText = 'ОНЛАЙН';
                 ctx.fillText(statusText, x, y + 45);
             }
         }
@@ -1843,16 +1792,10 @@ ADMIN_HTML = """
             if(reviews.length === 0) { container.innerHTML = `<div class="col-span-3 text-center text-zinc-500 py-6 text-xs font-bold">Немає відгуків</div>`; return; }
             container.innerHTML = reviews.map(r => {
                 let stars = ''; for(let i=1; i<=5; i++) stars += `<i class="${i<=r.rating?'fas':'far'} fa-star text-amber-500 text-[10px]"></i>`;
-                
-                // Відображаємо відповідь від адміна (або від Gemini), якщо вона є
-                let adminReplyHtml = r.admin_reply ? `
-                    <div class="mt-2 bg-indigo-900/30 border border-indigo-500/30 p-2 rounded-lg">
-                        <span class="text-[9px] font-black text-indigo-400 uppercase">Відповідь закладу:</span>
-                        <p class="text-[10px] text-zinc-300 mt-0.5">${r.admin_reply}</p>
-                    </div>` : '';
+                let adminReplyHtml = r.admin_reply ? `<div class="mt-2 bg-indigo-900/30 border border-indigo-500/30 p-2 rounded-lg"><span class="text-[9px] font-black text-indigo-400 uppercase">Відповідь закладу:</span><p class="text-[10px] text-zinc-300 mt-0.5">${r.admin_reply}</p></div>` : '';
 
                 return `
-                    <div class="bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl flex flex-col justify-between h-full">
+                    <div id="review-${r._id}" class="bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl flex flex-col justify-between h-full transition-all duration-300">
                         <div>
                             <div class="flex justify-between items-center mb-1">
                                 <h4 class="font-black text-xs text-zinc-200">${r.name}</h4>
@@ -1895,62 +1838,37 @@ ADMIN_HTML = """
                         </div>`).join('');
                 }
             }
-            document.getElementById('review-orders-modal').classList.remove('hidden');
-            document.getElementById('review-orders-modal').classList.add('flex');
+            document.getElementById('review-orders-modal').classList.remove('hidden'); document.getElementById('review-orders-modal').classList.add('flex');
         }
         function closeReviewOrdersModal() { document.getElementById('review-orders-modal').classList.add('hidden'); document.getElementById('review-orders-modal').classList.remove('flex'); }
 
         function renderArchive(data) {
-            const oList = document.getElementById('archive-orders-list');
-            const dList = document.getElementById('archive-devices-list');
+            const oList = document.getElementById('archive-orders-list'); const dList = document.getElementById('archive-devices-list');
             if(oList) oList.innerHTML = data.orders.map(o => `<div class="bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-[10px]"><div class="flex justify-between font-bold border-b border-zinc-800 pb-1 mb-1"><span class="text-emerald-400">#${o.order_number} (Стіл ${o.table})</span><span class="text-zinc-500">${o.time_str}</span></div><div class="text-zinc-400">${o.items.map(i=>`• ${i.name} x${i.qty}`).join('<br>')}</div><div class="text-right font-black text-zinc-300 mt-1">${o.total_price} ₴</div></div>`).join('') || '<p class="text-zinc-500 text-[10px]">Немає оплачених замовлень</p>';
             if(dList) dList.innerHTML = data.devices.map(d => `<div class="bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-[10px]"><div class="flex justify-between font-bold mb-1"><span class="text-indigo-400">Стіл ${d.table}</span><span class="text-zinc-500">${d.last_seen}</span></div><div class="bg-black/40 p-1.5 rounded font-mono text-[9px] text-zinc-400 break-all leading-tight">${d.user_agent}</div></div>`).join('') || '<p class="text-zinc-500 text-[10px]">Історія пристроїв порожня</p>';
         }
 
         socket.on('receive_frame', (data) => {
-            const smallImg = document.getElementById(`stream-uuid-${data.uuid}`);
-            if (smallImg) smallImg.src = data.frame;
-
+            const smallImg = document.getElementById(`stream-uuid-${data.uuid}`); if (smallImg) smallImg.src = data.frame;
             const floatingWin = document.getElementById('floating-stream-window');
-            if (!floatingWin.classList.contains('hidden') && floatingWin.dataset.currentUuid === data.uuid) {
-                document.getElementById('floating-stream-img').src = data.frame;
-            }
+            if (!floatingWin.classList.contains('hidden') && floatingWin.dataset.currentUuid === data.uuid) { document.getElementById('floating-stream-img').src = data.frame; }
         });
 
         function openFloatingStream(uuid, tableNum) {
-            const win = document.getElementById('floating-stream-window');
-            document.getElementById('floating-stream-title').innerText = `Камера клієнта: Стіл #${tableNum}`;
-            win.dataset.currentUuid = uuid;
-            win.classList.remove('hidden');
-            win.style.top = '20%';
-            win.style.left = '10%';
+            const win = document.getElementById('floating-stream-window'); document.getElementById('floating-stream-title').innerText = `Камера клієнта: Стіл #${tableNum}`;
+            win.dataset.currentUuid = uuid; win.classList.remove('hidden'); win.style.top = '20%'; win.style.left = '10%';
         }
 
         function closeFloatingStream() { document.getElementById('floating-stream-window').classList.add('hidden'); }
 
         function initDraggableWindow(elementId, headerId) {
-            const el = document.getElementById(elementId);
-            const header = document.getElementById(headerId);
-            if(!el || !header) return;
-            let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
-            header.onmousedown = dragMouseDown;
-
-            function dragMouseDown(e) {
-                e = e || window.event; e.preventDefault();
-                pos3 = e.clientX; pos4 = e.clientY;
-                document.onmouseup = closeDragElement;
-                document.onmousemove = elementDrag;
-            }
-            function elementDrag(e) {
-                e = e || window.event; e.preventDefault();
-                pos1 = pos3 - e.clientX; pos2 = pos4 - e.clientY;
-                pos3 = e.clientX; pos4 = e.clientY;
-                el.style.top = (el.offsetTop - pos2) + "px"; el.style.left = (el.offsetLeft - pos1) + "px";
-            }
+            const el = document.getElementById(elementId); const header = document.getElementById(headerId); if(!el || !header) return;
+            let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0; header.onmousedown = dragMouseDown;
+            function dragMouseDown(e) { e = e || window.event; e.preventDefault(); pos3 = e.clientX; pos4 = e.clientY; document.onmouseup = closeDragElement; document.onmousemove = elementDrag; }
+            function elementDrag(e) { e = e || window.event; e.preventDefault(); pos1 = pos3 - e.clientX; pos2 = pos4 - e.clientY; pos3 = e.clientX; pos4 = e.clientY; el.style.top = (el.offsetTop - pos2) + "px"; el.style.left = (el.offsetLeft - pos1) + "px"; }
             function closeDragElement() { document.onmouseup = null; document.onmousemove = null; }
         }
-        initDraggableWindow('floating-stream-window', 'floating-stream-header');
-        initDraggableWindow('gemini-chat-modal', 'gemini-chat-header');
+        initDraggableWindow('floating-stream-window', 'floating-stream-header'); initDraggableWindow('gemini-chat-modal', 'gemini-chat-header');
 
         function updateOrderStatus(id, status) { socket.emit('order_status_update', { id, status }); }
         function deleteOrder(id) { showConfirm('Видалити замовлення?', () => { socket.emit('order_delete', { id }); }); }
@@ -1959,15 +1877,11 @@ ADMIN_HTML = """
         function exportDatabase() { window.location.href = '/export_db'; }
         
         function importDatabase() {
-            const fileInput = document.getElementById('import-file');
-            if(!fileInput.files[0]) return;
+            const fileInput = document.getElementById('import-file'); if(!fileInput.files[0]) return;
             const reader = new FileReader();
             reader.onload = function(e) {
-                try {
-                    socket.emit('admin_import_db', JSON.parse(e.target.result));
-                    showAlert('Резервну копію успішно відновлено!');
-                    fileInput.value = '';
-                } catch(err) { showAlert('Помилка структури JSON.'); }
+                try { socket.emit('admin_import_db', JSON.parse(e.target.result)); showAlert('Резервну копію успішно відновлено!'); fileInput.value = ''; }
+                catch(err) { showAlert('Помилка структури JSON.'); }
             };
             reader.readAsText(fileInput.files[0]);
         }
@@ -1978,156 +1892,107 @@ ADMIN_HTML = """
             socket.emit('admin_save_settings', {
                 gemini_enabled: document.getElementById('setting-gemini-enabled').checked,
                 gemini_autoreply: document.getElementById('setting-gemini-autoreply').checked,
-                gemini_token: document.getElementById('setting-gemini-token').value
+                gemini_access_menu: document.getElementById('gemini-acc-menu').checked,
+                gemini_access_orders: document.getElementById('gemini-acc-orders').checked,
+                gemini_access_reviews: document.getElementById('gemini-acc-reviews').checked,
+                gemini_access_archive: document.getElementById('gemini-acc-archive').checked,
+                gemini_token: document.getElementById('setting-gemini-token').value,
+                gemini_token_2: document.getElementById('setting-gemini-token-2').value
             });
             showAlert('Налаштування системи успішно збережено!');
         }
 
-        socket.on('users_sync', (users) => {
-            systemUsers = users;
-            renderUsersList();
-            showAlert('Дані користувачів оновлено');
-            resetUserForm();
-        });
+        socket.on('users_sync', (users) => { systemUsers = users; renderUsersList(); showAlert('Дані користувачів оновлено'); resetUserForm(); });
 
         function renderUsersList() {
-            const list = document.getElementById('settings-users-list');
-            if (!list) return;
-            
+            const list = document.getElementById('settings-users-list'); if (!list) return;
             list.innerHTML = systemUsers.map(u => {
-                const p = u.permissions || {};
-                let pLabels = [];
-                if(p.view_orders) pLabels.push('Замовлення');
-                if(p.view_menu) pLabels.push('Меню');
-                if(p.view_monitoring) pLabels.push('Live');
-                if(p.view_map) pLabels.push('Карта');
-                if(p.view_analytics) pLabels.push('Аналітика');
-                if(p.view_reviews) pLabels.push('Відгуки');
-                if(p.view_archive) pLabels.push('Архів');
-                
-                return `
-                <div class="bg-zinc-900 border border-zinc-800 p-3 rounded-xl flex justify-between items-center">
-                    <div>
-                        <div class="text-xs font-black text-emerald-400 mb-1"><i class="fas fa-key mr-1"></i> ${u.password}</div>
-                        <div class="text-[9px] text-zinc-500">${pLabels.length > 0 ? pLabels.join(', ') : 'Немає доступу'}</div>
-                    </div>
-                    <div class="flex gap-2">
-                        <button onclick='editUser(${JSON.stringify(u)})' class="text-indigo-400 text-[10px] hover:text-indigo-300"><i class="fas fa-edit"></i></button>
-                        <button onclick="deleteUser('${u.password}')" class="text-red-500 text-[10px] hover:text-red-400"><i class="fas fa-trash"></i></button>
-                    </div>
-                </div>`;
+                const p = u.permissions || {}; let pLabels = [];
+                if(p.view_orders) pLabels.push('Замовлення'); if(p.view_menu) pLabels.push('Меню'); if(p.view_monitoring) pLabels.push('Live');
+                if(p.view_map) pLabels.push('Карта'); if(p.view_analytics) pLabels.push('Аналітика'); if(p.view_reviews) pLabels.push('Відгуки'); if(p.view_archive) pLabels.push('Архів');
+                return `<div class="bg-zinc-900 border border-zinc-800 p-3 rounded-xl flex justify-between items-center"><div><div class="text-xs font-black text-emerald-400 mb-1"><i class="fas fa-key mr-1"></i> ${u.password}</div><div class="text-[9px] text-zinc-500">${pLabels.length > 0 ? pLabels.join(', ') : 'Немає доступу'}</div></div><div class="flex gap-2"><button onclick='editUser(${JSON.stringify(u)})' class="text-indigo-400 text-[10px] hover:text-indigo-300"><i class="fas fa-edit"></i></button><button onclick="deleteUser('${u.password}')" class="text-red-500 text-[10px] hover:text-red-400"><i class="fas fa-trash"></i></button></div></div>`;
             }).join('');
         }
 
         function saveUser() {
-            const originalPw = document.getElementById('user-original-pw').value;
-            const newPw = document.getElementById('user-pw').value.trim();
-            if(!newPw) return showAlert('Введіть пароль!');
-            if(newPw === 'sonia') return showAlert('Пароль sonia зарезервовано системою!');
-
-            const perms = {
-                view_orders: document.getElementById('perm-view_orders').checked,
-                view_menu: document.getElementById('perm-view_menu').checked,
-                view_monitoring: document.getElementById('perm-view_monitoring').checked,
-                view_map: document.getElementById('perm-view_map').checked,
-                view_analytics: document.getElementById('perm-view_analytics').checked,
-                view_reviews: document.getElementById('perm-view_reviews').checked,
-                view_archive: document.getElementById('perm-view_archive').checked
-            };
-
+            const originalPw = document.getElementById('user-original-pw').value; const newPw = document.getElementById('user-pw').value.trim();
+            if(!newPw) return showAlert('Введіть пароль!'); if(newPw === 'sonia') return showAlert('Пароль sonia зарезервовано системою!');
+            const perms = { view_orders: document.getElementById('perm-view_orders').checked, view_menu: document.getElementById('perm-view_menu').checked, view_monitoring: document.getElementById('perm-view_monitoring').checked, view_map: document.getElementById('perm-view_map').checked, view_analytics: document.getElementById('perm-view_analytics').checked, view_reviews: document.getElementById('perm-view_reviews').checked, view_archive: document.getElementById('perm-view_archive').checked };
             socket.emit('admin_save_user', { original_password: originalPw, password: newPw, permissions: perms });
         }
 
         function editUser(user) {
-            document.getElementById('user-original-pw').value = user.password;
-            document.getElementById('user-pw').value = user.password;
-            const p = user.permissions || {};
-            document.getElementById('perm-view_orders').checked = !!p.view_orders;
-            document.getElementById('perm-view_menu').checked = !!p.view_menu;
-            document.getElementById('perm-view_monitoring').checked = !!p.view_monitoring;
-            document.getElementById('perm-view_map').checked = !!p.view_map;
-            document.getElementById('perm-view_analytics').checked = !!p.view_analytics;
-            document.getElementById('perm-view_reviews').checked = !!p.view_reviews;
-            document.getElementById('perm-view_archive').checked = !!p.view_archive;
+            document.getElementById('user-original-pw').value = user.password; document.getElementById('user-pw').value = user.password; const p = user.permissions || {};
+            document.getElementById('perm-view_orders').checked = !!p.view_orders; document.getElementById('perm-view_menu').checked = !!p.view_menu; document.getElementById('perm-view_monitoring').checked = !!p.view_monitoring; document.getElementById('perm-view_map').checked = !!p.view_map; document.getElementById('perm-view_analytics').checked = !!p.view_analytics; document.getElementById('perm-view_reviews').checked = !!p.view_reviews; document.getElementById('perm-view_archive').checked = !!p.view_archive;
         }
 
-        function resetUserForm() {
-            document.getElementById('user-original-pw').value = '';
-            document.getElementById('user-pw').value = '';
-            ['orders', 'menu', 'monitoring', 'map', 'analytics', 'reviews', 'archive'].forEach(id => {
-                document.getElementById('perm-view_' + id).checked = false;
-            });
-        }
+        function resetUserForm() { document.getElementById('user-original-pw').value = ''; document.getElementById('user-pw').value = ''; ['orders', 'menu', 'monitoring', 'map', 'analytics', 'reviews', 'archive'].forEach(id => { document.getElementById('perm-view_' + id).checked = false; }); }
+        function deleteUser(pw) { showConfirm(`Видалити доступ для пароля ${pw}?`, () => { socket.emit('admin_delete_user', { password: pw }); }); }
 
-        function deleteUser(pw) {
-            showConfirm(`Видалити доступ для пароля ${pw}?`, () => { socket.emit('admin_delete_user', { password: pw }); });
-        }
-
-        // --- ЛОГІКА GEMINI ЧАТУ ---
-        function openGeminiChat() {
-            document.getElementById('gemini-chat-modal').classList.remove('hidden');
-        }
-
-        function closeGeminiChat() {
-            document.getElementById('gemini-chat-modal').classList.add('hidden');
-        }
-
-        function toggleMinimizeGemini() {
-            const modal = document.getElementById('gemini-chat-modal');
-            modal.classList.toggle('gemini-minimized');
-        }
+        // --- ЛОГІКА GEMINI ЧАТУ ТА ПІДСВІЧУВАННЯ ---
+        function openGeminiChat() { document.getElementById('gemini-chat-modal').classList.remove('hidden'); }
+        function closeGeminiChat() { document.getElementById('gemini-chat-modal').classList.add('hidden'); }
+        function toggleMinimizeGemini() { document.getElementById('gemini-chat-modal').classList.toggle('gemini-minimized'); }
 
         function sendQuickAnalysis() {
             const inputField = document.getElementById('gemini-chat-input');
-            inputField.value = "Зроби повний детальний аналіз поточного стану закладу: що продається найкраще, які є проблеми та що можна покращити.";
+            inputField.value = "Зроби повний детальний аналіз поточного стану закладу та підсвіти (використай теги [HIGHLIGHT_ORDER:id] або [HIGHLIGHT_REVIEW:id]) найпроблемніше активне замовлення або поганий відгук, якщо такі є.";
             sendGeminiMessage();
         }
 
+        function highlightDomElement(type, id) {
+            const elementId = `${type}-${id}`;
+            const el = document.getElementById(elementId);
+            
+            // Якщо знаходимось не на тій вкладці - перемикаємо
+            if (type === 'order') switchTab('orders');
+            if (type === 'review') switchTab('reviews');
+            
+            if (el) {
+                setTimeout(() => {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    el.classList.add('ai-highlight-glow');
+                    setTimeout(() => el.classList.remove('ai-highlight-glow'), 8000);
+                }, 500); // Даємо час на перемикання вкладки
+            }
+        }
+
         function sendGeminiMessage() {
-            const inputField = document.getElementById('gemini-chat-input');
-            const msg = inputField.value.trim();
-            if(!msg) return;
-
-            addChatMessage(msg, 'user');
-            inputField.value = '';
-            
-            // Показуємо анімацію загрузки
+            const inputField = document.getElementById('gemini-chat-input'); const msg = inputField.value.trim(); if(!msg) return;
+            addChatMessage(msg, 'user'); inputField.value = '';
             document.getElementById('gemini-loading').classList.remove('hidden');
-            
-            // Відправляємо скролл вниз
-            const history = document.getElementById('gemini-chat-history');
-            history.scrollTop = history.scrollHeight;
-
+            const history = document.getElementById('gemini-chat-history'); history.scrollTop = history.scrollHeight;
             socket.emit('chat_gemini', { message: msg });
         }
 
         function addChatMessage(text, sender) {
-            const history = document.getElementById('gemini-chat-history');
-            const isUser = sender === 'user';
-            
-            // Парсимо маркдаун для бота, а для юзера просто робимо escape
+            const history = document.getElementById('gemini-chat-history'); const isUser = sender === 'user';
             const parsedText = isUser ? escapeHtml(text) : marked.parse(text);
-            
-            const msgHtml = `
-                <div class="flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}">
-                    <div class="gemini-msg ${isUser ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-zinc-900 border border-indigo-500/30 text-zinc-200 rounded-tl-none shadow-[0_0_10px_rgba(99,102,241,0.1)]'} text-xs p-3 rounded-xl max-w-[85%]">
-                        ${parsedText}
-                    </div>
-                </div>
-            `;
-            
-            history.innerHTML += msgHtml;
-            history.scrollTop = history.scrollHeight;
+            const msgHtml = `<div class="flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}"><div class="gemini-msg ${isUser ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-zinc-900 border border-indigo-500/30 text-zinc-200 rounded-tl-none shadow-[0_0_10px_rgba(99,102,241,0.1)]'} text-xs p-3 rounded-xl max-w-[85%]">${parsedText}</div></div>`;
+            history.innerHTML += msgHtml; history.scrollTop = history.scrollHeight;
         }
 
         socket.on('gemini_chat_reply', (data) => {
             document.getElementById('gemini-loading').classList.add('hidden');
-            addChatMessage(data.msg, 'bot');
+            let msg = data.msg;
+
+            // Шукаємо теги підсвічування
+            const reviewRegex = /\[HIGHLIGHT_REVIEW:([a-zA-Z0-9]+)\]/g;
+            const orderRegex = /\[HIGHLIGHT_ORDER:([a-zA-Z0-9]+)\]/g;
+            
+            let match;
+            while ((match = reviewRegex.exec(msg)) !== null) highlightDomElement('review', match[1]);
+            while ((match = orderRegex.exec(msg)) !== null) highlightDomElement('order', match[1]);
+            
+            // Очищаємо текст від цих системних тегів перед рендером
+            msg = msg.replace(/\[HIGHLIGHT_REVIEW:[a-zA-Z0-9]+\]/g, '');
+            msg = msg.replace(/\[HIGHLIGHT_ORDER:[a-zA-Z0-9]+\]/g, '');
+
+            addChatMessage(msg, 'bot');
         });
 
         socket.on('gemini_chat_error', (data) => {
-            document.getElementById('gemini-loading').classList.add('hidden');
-            addChatMessage(`**Помилка:** ${data.msg}`, 'bot');
+            document.getElementById('gemini-loading').classList.add('hidden'); addChatMessage(`**Помилка:** ${data.msg}`, 'bot');
         });
 
     </script>
