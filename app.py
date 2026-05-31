@@ -480,8 +480,7 @@ def handle_ask_gemini():
     ]
     Якщо порад немає, поверни [].
     """
-    
-try:
+    try:
         # Очищаємо токен від можливих пробілів
         clean_token = token.strip()
         
