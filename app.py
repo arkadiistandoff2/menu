@@ -25,7 +25,12 @@ try:
     
     # Ініціалізація базових налаштувань, якщо їх немає
     if not db.settings.find_one({"_id": "system"}):
-        db.settings.insert_one({"_id": "system", "gemini_enabled": False, "gemini_token": ""})
+        db.settings.insert_one({
+            "_id": "system", 
+            "gemini_enabled": False, 
+            "gemini_token": "",
+            "gemini_autoreply": False
+        })
         
 except Exception as e:
     print(f"Помилка БД: {e}")
@@ -369,11 +374,34 @@ def handle_review_add(data):
         'text': data.get('text', ''),
         'rating': int(data.get('rating', 5)),
         'timestamp': get_kyiv_time(),
-        'time_str': get_kyiv_time_str()
+        'time_str': get_kyiv_time_str(),
+        'admin_reply': None
     }
-    db.reviews.insert_one(review_data)
+    res = db.reviews.insert_one(review_data)
     socketio.emit('reviews_sync', get_all_reviews())
     socketio.emit('analytics_sync', calculate_dashboard_stats(), room='admins')
+    
+    # Авто-відповідь від Gemini (Фоновий процес)
+    settings = db.settings.find_one({"_id": "system"})
+    if settings and settings.get('gemini_enabled') and settings.get('gemini_autoreply'):
+        token = settings.get('gemini_token', '').strip()
+        if token:
+            eventlet.spawn(auto_reply_to_review, str(res.inserted_id), review_data, token)
+
+def auto_reply_to_review(review_id, review_data, token):
+    prompt = f"Користувач {review_data['name']} залишив відгук про наш заклад: '{review_data['text']}' з оцінкою {review_data['rating']} зірок. Напиши коротку, стильну та ввічливу відповідь від імені адміністрації кафе (1-2 речення). Без маркдауну."
+    try:
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        headers = {'Content-Type': 'application/json', 'x-goog-api-key': token}
+        req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method='POST')
+        with urllib.request.urlopen(req) as response:
+            res_data = json.loads(response.read().decode())
+            reply = res_data['candidates'][0]['content']['parts'][0]['text'].strip()
+            db.reviews.update_one({"_id": ObjectId(review_id)}, {"$set": {"admin_reply": reply}})
+            socketio.emit('reviews_sync', get_all_reviews())
+    except Exception as e:
+        print("Gemini Auto-Reply Error:", e)
 
 @socketio.on('reviews_delete')
 def handle_reviews_delete(data):
@@ -417,7 +445,8 @@ def handle_admin_save_settings(data):
     if session.get('role') == 'master':
         db.settings.update_one({"_id": "system"}, {"$set": {
             "gemini_enabled": data.get("gemini_enabled", False),
-            "gemini_token": data.get("gemini_token", "")
+            "gemini_token": data.get("gemini_token", ""),
+            "gemini_autoreply": data.get("gemini_autoreply", False)
         }}, upsert=True)
 
 @socketio.on('admin_save_user')
@@ -444,83 +473,40 @@ def handle_admin_delete_user(data):
         users = list(db.users.find({}, {'_id': 0}))
         socketio.emit('users_sync', users, room=request.sid)
 
-# -- GEMINI AGENT INTEGRATION --
-@socketio.on('ask_gemini')
-def handle_ask_gemini():
+# -- GEMINI CHAT INTEGRATION --
+@socketio.on('chat_gemini')
+def handle_chat_gemini(data):
     if not session.get('admin_logged'): return
     
     settings = db.settings.find_one({"_id": "system"})
     if not settings or not settings.get('gemini_enabled') or not settings.get('gemini_token'):
-        socketio.emit('gemini_error', {'msg': 'Gemini не увімкнено або відсутній токен у налаштуваннях.'}, room=request.sid)
+        socketio.emit('gemini_chat_error', {'msg': 'Gemini не увімкнено або відсутній токен у налаштуваннях.'}, room=request.sid)
         return
         
-    token = settings['gemini_token']
+    token = settings['gemini_token'].strip()
+    user_msg = data.get('message', '')
+    
     stats = calculate_dashboard_stats()
     menu = get_all_menu()
     
     prompt = f"""
-    Ти - професійний аналітик та менеджер ресторану. Проаналізуй дані кафе.
-    Статистика (включає загальний дохід, топ продажів та рейтинг): {json.dumps(stats, ensure_ascii=False)}
-    Меню з поточними цінами: {json.dumps(menu, ensure_ascii=False)}
-    
-    Сформуй поради щодо оптимізації меню. Якщо бачиш що страва популярна, можеш порадити підняти ціну. Якщо непопулярна - знизити або змінити назву.
-    Твоя відповідь має бути ВИНЯТКОВО у форматі валідного JSON масиву об'єктів (БЕЗ маркдауну, БЕЗ блоків коду). 
-    Структура об'єкта:
-    [
-      {{
-         "what": "Що міняємо (старе значення, наприклад: 150 ₴)",
-         "to": "На що міняємо (нове значення, наприклад: 165)",
-         "where": "Назва страви",
-         "reason": "Чому це треба зробити (українською)",
-         "action_type": "update_menu", 
-         "target_id": "ID страви з меню",
-         "field": "price",
-         "new_value": "165"
-      }}
-    ]
-    Якщо порад немає, поверни [].
+    Ти - професійний ШІ-асистент дизайнера та менеджера ресторану.
+    Поточна статистика кафе: {json.dumps(stats, ensure_ascii=False)}.
+    Запит від користувача: {user_msg}
+    Відповідай коротко, стильно і по суті. Без зайвої води.
     """
     try:
-        # Очищаємо токен від можливих пробілів
-        clean_token = token.strip()
-        
-        # Тепер викликаємо модель БЕЗ токена в самому URL
         url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
-        
-        payload = {
-            "contents": [{
-                "parts": [{"text": prompt}]
-            }]
-        }
-        
-        # Передаємо ключ через правильні заголовки авторизації
-        headers = {
-            'Content-Type': 'application/json',
-            'x-goog-api-key': clean_token  # Спеціальний заголовок Google для нових ключів
-        }
-        
+        payload = {"contents": [{"parts": [{"text": prompt}]}]}
+        headers = {'Content-Type': 'application/json', 'x-goog-api-key': token}
         req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method='POST')
+        
+        with urllib.request.urlopen(req) as response:
+            res_data = json.loads(response.read().decode())
+            reply = res_data['candidates'][0]['content']['parts'][0]['text']
+            socketio.emit('gemini_chat_reply', {'msg': reply}, room=request.sid)
     except Exception as e:
-        socketio.emit('gemini_error', {'msg': f'Помилка підключення до Gemini API: {str(e)}'}, room=request.sid)
-
-@socketio.on('apply_gemini_action')
-def handle_apply_gemini_action(data):
-    if not session.get('admin_logged'): return
-    
-    action_type = data.get('action_type')
-    target_id = data.get('target_id')
-    field = data.get('field')
-    new_value = data.get('new_value')
-    
-    if action_type == 'update_menu' and target_id and field:
-        # Конвертуємо тип для ціни
-        if field == 'price':
-            try: new_value = float(new_value)
-            except: pass
-            
-        db.menu.update_one({"_id": ObjectId(target_id)}, {"$set": {field: new_value}})
-        socketio.emit('menu_sync', get_all_menu())
-        socketio.emit('gemini_success', {'msg': 'Зміни успішно застосовано!'}, room=request.sid)
+        socketio.emit('gemini_chat_error', {'msg': f'Помилка підключення до Gemini API: {str(e)}'}, room=request.sid)
 
 # ==============================================================================
 # 5. ШАБЛОНИ КРАСИВОГО КІБЕР-ІНТЕРФЕЙСУ (HTML/JS)
@@ -578,7 +564,6 @@ CUSTOMER_HTML = """
             --accent: #ec4899;
         }
 
-        /* Плавні переходи та застосування змінних */
         body { background-color: var(--bg-base) !important; color: var(--text-base) !important; transition: background-color 0.5s ease, color 0.5s ease; font-family: system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
         .bg-zinc-950, .bg-zinc-900, .glass-card { background-color: var(--bg-panel) !important; transition: background-color 0.5s ease; }
         header { background-color: var(--bg-header) !important; transition: background-color 0.5s ease; }
@@ -589,7 +574,6 @@ CUSTOMER_HTML = """
         .text-indigo-400, .text-indigo-500 { color: var(--accent) !important; transition: color 0.5s ease; }
         .border-indigo-500, .border-indigo-500\\/20, .border-indigo-500\\/30 { border-color: var(--accent) !important; transition: border-color 0.5s ease; }
 
-        /* Стилі для кнопок категорій, щоб вони реагували на зміну теми */
         .cat-btn { background-color: var(--bg-panel) !important; color: var(--text-muted) !important; border-color: var(--border-color) !important; }
         .cat-btn.active { background-color: var(--accent) !important; color: #ffffff !important; border-color: var(--accent) !important; }
 
@@ -733,12 +717,10 @@ CUSTOMER_HTML = """
         let savedCart = localStorage.getItem(`nexus_cart_${tableId}_${clientUUID}`);
         if(savedCart) cart = JSON.parse(savedCart);
 
-        // --- НОВА ЛОГІКА ТЕМ ОФОРМЛЕННЯ (Плавне викочування кульок) ---
         function toggleThemeMenu(e) {
             if(e) e.stopPropagation();
             const container = document.getElementById('theme-circles');
             if (container.classList.contains('opacity-0')) {
-                // Показуємо кульки
                 container.classList.remove('opacity-0', 'pointer-events-none', 'translate-x-4');
                 container.classList.add('opacity-100', 'translate-x-0');
             } else {
@@ -754,7 +736,6 @@ CUSTOMER_HTML = """
             }
         }
 
-        // Закривати меню тем при кліку в будь-яке інше місце
         document.addEventListener('click', (e) => {
             const btn = document.getElementById('theme-toggle-btn');
             const circles = document.getElementById('theme-circles');
@@ -769,7 +750,6 @@ CUSTOMER_HTML = """
             closeThemeMenu();
         }
         setTheme(localStorage.getItem('nexus_theme') || 'dark');
-        // -------------------------------------------
 
         socket.on('connect', () => {
             socket.emit('client_init', { uuid: clientUUID, table: tableId, user_agent: navigator.userAgent });
@@ -812,7 +792,6 @@ CUSTOMER_HTML = """
         function renderCategories() {
             const bar = document.getElementById('category-bar');
             const cats = ['Всі', ...new Set(menuItems.map(i => i.category))];
-            // Використовуємо кастомні класи cat-btn для підтримки зміни тем
             bar.innerHTML = cats.map(c => `<button onclick="setCategory('${c}')" class="px-3 py-2 rounded-xl whitespace-nowrap font-black text-[11px] uppercase tracking-wider transition-all border ${currentCategory === c ? 'cat-btn active shadow-md' : 'cat-btn'}">${c}</button>`).join('');
         }
 
@@ -978,7 +957,16 @@ ADMIN_HTML = """
         .hide-scroll::-webkit-scrollbar { display: none; }
         .draggable-window { position: absolute; z-index: 100; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5); }
         .drag-header { cursor: move; }
-        .gemini-resizer { resize: both; overflow: auto; min-width: 300px; min-height: 250px; }
+        
+        /* Стиль для зміни розміру Gemini чату */
+        .gemini-resizer { 
+            resize: both; 
+            overflow: hidden; 
+            min-width: 300px; 
+            min-height: 400px; 
+            max-width: 90vw; 
+            max-height: 90vh;
+        }
     </style>
 </head>
 <body class="p-4 md:p-6">
@@ -1148,8 +1136,8 @@ ADMIN_HTML = """
                 <p class="text-[10px] text-zinc-400 mt-0.5">Ключові показники та графіки</p>
             </div>
             {% if settings.gemini_enabled %}
-            <button onclick="askGemini()" id="btn-ask-gemini" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2 rounded-xl flex items-center gap-2 shadow-lg transition-all">
-                <i class="fas fa-robot"></i> Аналізувати з Gemini
+            <button onclick="openGeminiChat()" id="btn-open-gemini" class="bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs px-4 py-2 rounded-xl flex items-center gap-2 shadow-lg transition-all">
+                <i class="fas fa-robot"></i> Чат з Gemini
             </button>
             {% endif %}
         </div>
@@ -1221,7 +1209,12 @@ ADMIN_HTML = """
                     <span class="text-xs font-bold text-zinc-300">Увімкнути Gemini Агента</span>
                 </label>
                 
-                <div>
+                <label class="flex items-center gap-3 cursor-pointer mt-1">
+                    <input type="checkbox" id="setting-gemini-autoreply" class="rounded bg-zinc-950 border-zinc-700 text-emerald-500 focus:ring-0 w-4 h-4" {% if settings.gemini_autoreply %}checked{% endif %}>
+                    <span class="text-xs font-bold text-zinc-300">Автоматична відповідь на відгуки (Gemini)</span>
+                </label>
+                
+                <div class="mt-2">
                     <label class="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Токен Gemini API (Google AI Studio)</label>
                     <input type="text" id="setting-gemini-token" value="{{ settings.gemini_token }}" placeholder="Введіть API токен..." class="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-zinc-200 text-xs focus:outline-none focus:border-indigo-500">
                 </div>
@@ -1256,23 +1249,35 @@ ADMIN_HTML = """
                     </div>
                 </div>
 
-                <div id="settings-users-list" class="space-y-2 max-h-[250px] overflow-y-auto pr-1 hide-scroll">
-                    </div>
+                <div id="settings-users-list" class="space-y-2 max-h-[250px] overflow-y-auto pr-1 hide-scroll"></div>
             </div>
         </div>
     </div>
     {% endif %}
 
-    <div id="gemini-modal" class="draggable-window gemini-resizer hidden bg-zinc-950 border border-indigo-500 rounded-xl flex flex-col" style="top: 20%; left: 30%; width: 500px; height: 400px;">
-        <div id="gemini-modal-header" class="bg-zinc-900 border-b border-zinc-800 p-2.5 flex justify-between items-center drag-header select-none">
+    <div id="gemini-chat-modal" class="draggable-window gemini-resizer hidden bg-zinc-950 border border-indigo-500 rounded-2xl flex flex-col shadow-2xl" style="top: 15%; right: 5%; width: 380px; height: 500px;">
+        <div id="gemini-chat-header" class="bg-zinc-900 border-b border-zinc-800 p-3 flex justify-between items-center drag-header select-none rounded-t-2xl">
             <div class="flex items-center gap-2">
                 <i class="fas fa-robot text-indigo-400"></i>
-                <span class="text-xs font-black text-zinc-200 uppercase tracking-widest">Gemini Агент Аналітики</span>
+                <span class="text-xs font-black text-zinc-200 uppercase tracking-widest">Gemini Асистент</span>
             </div>
-            <button onclick="closeGeminiModal()" class="text-zinc-500 hover:text-white font-bold bg-zinc-800 px-2 py-1 rounded-lg text-xs"><i class="fas fa-times"></i></button>
+            <button onclick="closeGeminiChat()" class="text-zinc-500 hover:text-white font-bold bg-zinc-800 px-2.5 py-1 rounded-lg text-xs transition-colors"><i class="fas fa-times"></i></button>
         </div>
-        <div class="flex-1 overflow-auto p-4 bg-black/50 hide-scroll" id="gemini-suggestions-list">
+        
+        <div id="gemini-chat-history" class="flex-1 overflow-y-auto p-4 space-y-4 hide-scroll bg-black/40">
+            <div class="flex flex-col gap-1 items-start">
+                <div class="bg-zinc-900 border border-zinc-800 text-zinc-200 text-xs p-3 rounded-xl rounded-tl-none max-w-[85%]">
+                    Привіт! Я твій ШІ-помічник. Чим можу допомогти з кафе?
+                </div>
             </div>
+        </div>
+        
+        <div class="p-3 bg-zinc-900 border-t border-zinc-800 flex gap-2 rounded-b-2xl">
+            <input type="text" id="gemini-chat-input" placeholder="Напишіть запит..." class="flex-1 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500" onkeypress="if(event.key === 'Enter') sendGeminiMessage()">
+            <button onclick="sendGeminiMessage()" class="bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl px-4 py-2 text-xs font-bold transition-colors">
+                <i class="fas fa-paper-plane"></i>
+            </button>
+        </div>
     </div>
 
     <div id="review-orders-modal" class="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm hidden items-center justify-center p-4">
@@ -1311,7 +1316,6 @@ ADMIN_HTML = """
     </div>
 
     <script>
-        // Ініціалізація даних з Flask (Jinja2)
         let systemUsers = [];
         {% if role == 'master' %}
         systemUsers = {{ users_json|safe }};
@@ -1343,7 +1347,6 @@ ADMIN_HTML = """
         document.getElementById('nexus-btn-confirm').addEventListener('click', () => { if (modalCallback) modalCallback(true); });
         document.getElementById('nexus-btn-cancel').addEventListener('click', () => { if (modalCallback) modalCallback(false); });
 
-        // Вкладки
         function switchTab(tabId) {
             document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
             document.querySelectorAll('.tab-btn').forEach(b => { b.classList.remove('active'); b.classList.add('text-zinc-400'); });
@@ -1359,13 +1362,11 @@ ADMIN_HTML = """
             if (tabId === 'settings') { renderUsersList(); }
         }
 
-        // Автовибір першої доступної вкладки
         window.addEventListener('DOMContentLoaded', () => {
             const firstTab = document.querySelector('.tab-btn');
             if (firstTab) firstTab.click();
         });
 
-        // ПОВНОЕКРАННИЙ РЕЖИМ СТРИМУ
         function toggleFullscreenStream() {
             const win = document.getElementById('floating-stream-window');
             if (!document.fullscreenElement) {
@@ -1377,7 +1378,6 @@ ADMIN_HTML = """
             }
         }
 
-        // DRAG & DROP ДЛЯ ФОТО СТРАВ
         document.addEventListener("DOMContentLoaded", () => {
             const dropZone = document.getElementById('drop-zone');
             const fileInput = document.getElementById('menu-file-input');
@@ -1416,7 +1416,6 @@ ADMIN_HTML = """
             }
         });
 
-        // DRAG & DROP ДЛЯ КАНБАН ДОШКИ
         function allowDrop(ev) { ev.preventDefault(); }
         function handleDragStart(ev, id) { ev.dataTransfer.setData("text/plain", id); }
         function highlightDropzone(id) { document.getElementById(id).classList.add('drag-over'); }
@@ -1435,27 +1434,11 @@ ADMIN_HTML = """
 
         socket.on('connect', () => { socket.emit('join_admin_room'); });
 
-        // ОНОВЛЕННЯ ДАНИХ (SYNC)
-        socket.on('orders_sync', (orders) => { 
-            globalOrders = orders; 
-            renderOrders(orders); 
-            drawTableMap(); 
-        });
-        
-        socket.on('menu_sync', (menu) => { 
-            globalMenu = menu; 
-            renderMenuGrid(); 
-            renderCategoryFilter(); 
-        });
-        
+        socket.on('orders_sync', (orders) => { globalOrders = orders; renderOrders(orders); drawTableMap(); });
+        socket.on('menu_sync', (menu) => { globalMenu = menu; renderMenuGrid(); renderCategoryFilter(); });
         socket.on('reviews_sync', (reviews) => { renderReviews(reviews); });
         socket.on('archive_sync', (data) => { renderArchive(data); });
-        
-        socket.on('devices_sync', (devices) => { 
-            liveDevicesData = devices;
-            renderDevices(); 
-            drawTableMap(); 
-        });
+        socket.on('devices_sync', (devices) => { liveDevicesData = devices; renderDevices(); drawTableMap(); });
 
         socket.on('analytics_sync', (data) => {
             const r = document.getElementById('stat-revenue');
@@ -1520,7 +1503,6 @@ ADMIN_HTML = """
         socket.on('new_order_alert', (order) => { showAlert(`Нове замовлення #${order.order_number}! Стіл: ${order.table}.`); });
         socket.on('waiter_alert', (data) => { showAlert(`🔔 Офіціанта викликають на Стіл #${data.table}`); });
 
-        // РЕНДЕР КАНБАН ДОШКИ ЗАМОВЛЕНЬ
         function renderOrders(orders) {
             const pendingBox = document.getElementById('queue-pending');
             const cookingBox = document.getElementById('queue-cooking');
@@ -1535,7 +1517,6 @@ ADMIN_HTML = """
                 if (o.status === 'Закрито') return;
                 const itemsHtml = o.items.map(i => `<div class="font-medium text-zinc-300 text-[10px] leading-tight">• ${i.name} <span class="text-indigo-400 font-bold">x${i.qty}</span></div>`).join('');
                 
-                // Візуальне покращення для коментарів та статусу "На виніс"
                 const commentHtml = o.comment ? `<div class="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg mt-1 font-bold shadow-inner"><i class="fas fa-comment-dots"></i> ${o.comment}</div>` : '';
                 
                 let tableDisplay = o.table === 'На виніс'
@@ -1572,7 +1553,6 @@ ADMIN_HTML = """
             document.getElementById('count-ready').innerText = cR;
         }
 
-        // РЕНДЕР МЕНЮ ЕДІТОРА (ІЗ ФІЛЬТРАМИ ТА FULL IMAGE)
         function renderCategoryFilter() {
             const bar = document.getElementById('admin-category-filter');
             if(!bar) return;
@@ -1587,7 +1567,6 @@ ADMIN_HTML = """
             
             if(filtered.length === 0) { grid.innerHTML = `<div class="col-span-3 text-center text-zinc-500 py-6 text-xs font-bold">Немає страв</div>`; return; }
 
-            // ЗОБРАЖЕННЯ В ПОВНОМУ РОЗМІРІ БЕЗ ОБРІЗАНЬ
             grid.innerHTML = filtered.map(item => `
                 <div class="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden flex flex-col justify-between">
                     ${item.image ? `<img src="${item.image}" class="w-full h-24 object-contain bg-zinc-950 border-b border-zinc-800">` : `<div class="w-full h-24 bg-zinc-950 flex items-center justify-center text-xl border-b border-zinc-800">🍽️</div>`}
@@ -1644,7 +1623,6 @@ ADMIN_HTML = """
             if(ind) { ind.innerText = 'Файл не обрано'; ind.className = 'text-[9px] text-zinc-600 truncate max-w-[200px]'; document.getElementById('drop-icon').className = "fas fa-cloud-upload-alt text-lg text-zinc-500"; }
         }
 
-        // РЕНДЕР МОНІТОРИНГУ ТА КІЛЬКОСТІ СТОЛІВ
         function changeTablesCount(delta) {
             let tablesCount = parseInt(localStorage.getItem('nexus_tables_count') || '12');
             tablesCount += delta;
@@ -1660,7 +1638,6 @@ ADMIN_HTML = """
             drawTableMap();
         }
 
-        // Ініціалізація лічильників при старті
         const storedCount = localStorage.getItem('nexus_tables_count') || '12';
         if(document.getElementById('tables-count-display-monitor')) document.getElementById('tables-count-display-monitor').innerText = storedCount;
         if(document.getElementById('tables-count-display-map')) document.getElementById('tables-count-display-map').innerText = storedCount;
@@ -1710,7 +1687,6 @@ ADMIN_HTML = """
             container.innerHTML = html;
         }
 
-        // КАРТА СТОЛІВ (CANVAS)
         function drawTableMap() {
             const canvas = document.getElementById('tableMapCanvas');
             if(!canvas) return;
@@ -1782,13 +1758,20 @@ ADMIN_HTML = """
             }
         }
 
-        // РЕНДЕР ВІДГУКІВ
         function renderReviews(reviews) {
             const container = document.getElementById('admin-reviews-list');
             if(!container) return;
             if(reviews.length === 0) { container.innerHTML = `<div class="col-span-3 text-center text-zinc-500 py-6 text-xs font-bold">Немає відгуків</div>`; return; }
             container.innerHTML = reviews.map(r => {
                 let stars = ''; for(let i=1; i<=5; i++) stars += `<i class="${i<=r.rating?'fas':'far'} fa-star text-amber-500 text-[10px]"></i>`;
+                
+                // Відображаємо відповідь від адміна (або від Gemini), якщо вона є
+                let adminReplyHtml = r.admin_reply ? `
+                    <div class="mt-2 bg-indigo-900/30 border border-indigo-500/30 p-2 rounded-lg">
+                        <span class="text-[9px] font-black text-indigo-400 uppercase">Відповідь закладу:</span>
+                        <p class="text-[10px] text-zinc-300 mt-0.5">${r.admin_reply}</p>
+                    </div>` : '';
+
                 return `
                     <div class="bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl flex flex-col justify-between h-full">
                         <div>
@@ -1798,6 +1781,7 @@ ADMIN_HTML = """
                             </div>
                             <div class="mb-2">${stars}</div>
                             <p class="text-[11px] text-zinc-300 font-medium leading-relaxed bg-black/30 p-2 rounded-lg">${r.text || 'Оцінка без коментаря'}</p>
+                            ${adminReplyHtml}
                         </div>
                         <div class="mt-3 pt-2 border-t border-zinc-800/60 flex justify-between items-center">
                             <button onclick="viewTableOrders('${r.name}')" class="text-[9px] font-black uppercase tracking-widest text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded hover:bg-indigo-500/20"><i class="fas fa-list-ul mr-1"></i> Замовлення</button>
@@ -1837,7 +1821,6 @@ ADMIN_HTML = """
         }
         function closeReviewOrdersModal() { document.getElementById('review-orders-modal').classList.add('hidden'); document.getElementById('review-orders-modal').classList.remove('flex'); }
 
-        // РЕНДЕР АРХІВУ
         function renderArchive(data) {
             const oList = document.getElementById('archive-orders-list');
             const dList = document.getElementById('archive-devices-list');
@@ -1845,7 +1828,6 @@ ADMIN_HTML = """
             if(dList) dList.innerHTML = data.devices.map(d => `<div class="bg-zinc-900 border border-zinc-800 p-2.5 rounded-xl text-[10px]"><div class="flex justify-between font-bold mb-1"><span class="text-indigo-400">Стіл ${d.table}</span><span class="text-zinc-500">${d.last_seen}</span></div><div class="bg-black/40 p-1.5 rounded font-mono text-[9px] text-zinc-400 break-all leading-tight">${d.user_agent}</div></div>`).join('') || '<p class="text-zinc-500 text-[10px]">Історія пристроїв порожня</p>';
         }
 
-        // ОБРОБКА ПЛАВАЮЧОГО ВІКНА СТРИМУ (DRAG & FULLSCREEN)
         socket.on('receive_frame', (data) => {
             const smallImg = document.getElementById(`stream-uuid-${data.uuid}`);
             if (smallImg) smallImg.src = data.frame;
@@ -1867,7 +1849,6 @@ ADMIN_HTML = """
 
         function closeFloatingStream() { document.getElementById('floating-stream-window').classList.add('hidden'); }
 
-        // ЗАГАЛЬНА ФУНКЦІЯ ПЕРЕТЯГУВАННЯ
         function initDraggableWindow(elementId, headerId) {
             const el = document.getElementById(elementId);
             const header = document.getElementById(headerId);
@@ -1890,7 +1871,7 @@ ADMIN_HTML = """
             function closeDragElement() { document.onmouseup = null; document.onmousemove = null; }
         }
         initDraggableWindow('floating-stream-window', 'floating-stream-header');
-        initDraggableWindow('gemini-modal', 'gemini-modal-header');
+        initDraggableWindow('gemini-chat-modal', 'gemini-chat-header');
 
         function updateOrderStatus(id, status) { socket.emit('order_status_update', { id, status }); }
         function deleteOrder(id) { showConfirm('Видалити замовлення?', () => { socket.emit('order_delete', { id }); }); }
@@ -1914,10 +1895,10 @@ ADMIN_HTML = """
 
         function escapeHtml(str) { if(!str) return ''; return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); }
 
-        // --- ЛОГІКА НАЛАШТУВАНЬ ТА КОРИСТУВАЧІВ (Майстер-акаунт) ---
         function saveSystemSettings() {
             socket.emit('admin_save_settings', {
                 gemini_enabled: document.getElementById('setting-gemini-enabled').checked,
+                gemini_autoreply: document.getElementById('setting-gemini-autoreply').checked,
                 gemini_token: document.getElementById('setting-gemini-token').value
             });
             showAlert('Налаштування системи успішно збережено!');
@@ -2003,78 +1984,51 @@ ADMIN_HTML = """
             showConfirm(`Видалити доступ для пароля ${pw}?`, () => { socket.emit('admin_delete_user', { password: pw }); });
         }
 
-        // --- ЛОГІКА GEMINI АГЕНТА ---
-        function askGemini() {
-            const btn = document.getElementById('btn-ask-gemini');
-            const originalText = btn.innerHTML;
-            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Аналізую...';
-            btn.disabled = true;
-            
-            socket.emit('ask_gemini');
-            
-            setTimeout(() => { btn.innerHTML = originalText; btn.disabled = false; }, 8000);
+        // --- ЛОГІКА GEMINI ЧАТУ ---
+        function openGeminiChat() {
+            document.getElementById('gemini-chat-modal').classList.remove('hidden');
         }
 
-        socket.on('gemini_suggestions', (suggestions) => {
-            const btn = document.getElementById('btn-ask-gemini');
-            btn.innerHTML = '<i class="fas fa-robot"></i> Аналізувати з Gemini';
-            btn.disabled = false;
+        function closeGeminiChat() {
+            document.getElementById('gemini-chat-modal').classList.add('hidden');
+        }
 
-            const modal = document.getElementById('gemini-modal');
-            const list = document.getElementById('gemini-suggestions-list');
+        function sendGeminiMessage() {
+            const inputField = document.getElementById('gemini-chat-input');
+            const msg = inputField.value.trim();
+            if(!msg) return;
+
+            // Додаємо повідомлення юзера в UI
+            addChatMessage(msg, 'user');
+            inputField.value = '';
+
+            socket.emit('chat_gemini', { message: msg });
+        }
+
+        function addChatMessage(text, sender) {
+            const history = document.getElementById('gemini-chat-history');
+            const isUser = sender === 'user';
             
-            if (!suggestions || suggestions.length === 0) {
-                list.innerHTML = `<div class="text-center text-zinc-500 mt-10"><i class="fas fa-check-circle text-4xl mb-3 text-emerald-500"></i><p class="text-xs">Система ідеальна, Gemini не має порад.</p></div>`;
-            } else {
-                list.innerHTML = suggestions.map((s, idx) => `
-                    <div class="bg-zinc-900 border border-zinc-800 p-3 rounded-xl mb-3 shadow-md" id="gemini-sugg-${idx}">
-                        <div class="mb-2 border-b border-zinc-800/50 pb-2">
-                            <span class="text-[10px] uppercase font-black tracking-widest text-indigo-400">Локація:</span>
-                            <span class="text-xs text-white ml-1 font-bold">${s.where}</span>
-                        </div>
-                        <div class="flex justify-between items-center mb-2 bg-black/40 p-2 rounded-lg">
-                            <div class="flex flex-col">
-                                <span class="text-[9px] text-zinc-500 uppercase tracking-widest font-black">Було</span>
-                                <span class="text-xs text-red-400 line-through">${s.what}</span>
-                            </div>
-                            <i class="fas fa-arrow-right text-zinc-600"></i>
-                            <div class="flex flex-col text-right">
-                                <span class="text-[9px] text-zinc-500 uppercase tracking-widest font-black">Стане</span>
-                                <span class="text-xs text-emerald-400 font-bold">${s.to}</span>
-                            </div>
-                        </div>
-                        <p class="text-[10px] text-zinc-400 italic mb-3"><i class="fas fa-info-circle text-zinc-500 mr-1"></i>${s.reason}</p>
-                        
-                        <div class="flex gap-2">
-                            <button onclick="applyGeminiAction(${idx}, '${s.action_type}', '${s.target_id}', '${s.field}', '${s.new_value}')" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white py-2 rounded-lg text-[11px] font-black transition-all">Так, застосувати</button>
-                            <button onclick="document.getElementById('gemini-sugg-${idx}').remove()" class="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 py-2 rounded-lg text-[11px] font-bold transition-all">Ні, відхилити</button>
-                        </div>
+            const msgHtml = `
+                <div class="flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}">
+                    <div class="${isUser ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-zinc-900 border border-zinc-800 text-zinc-200 rounded-tl-none'} text-xs p-3 rounded-xl max-w-[85%] shadow-md">
+                        ${escapeHtml(text)}
                     </div>
-                `).join('');
-            }
+                </div>
+            `;
             
-            modal.classList.remove('hidden');
-        });
-
-        socket.on('gemini_error', (data) => {
-            const btn = document.getElementById('btn-ask-gemini');
-            btn.innerHTML = '<i class="fas fa-robot"></i> Аналізувати з Gemini';
-            btn.disabled = false;
-            showAlert(data.msg, "Помилка Gemini");
-        });
-
-        socket.on('gemini_success', (data) => {
-            showToast(data.msg);
-        });
-
-        function closeGeminiModal() {
-            document.getElementById('gemini-modal').classList.add('hidden');
+            history.innerHTML += msgHtml;
+            history.scrollTop = history.scrollHeight;
         }
 
-        function applyGeminiAction(idx, action_type, target_id, field, new_value) {
-            document.getElementById(`gemini-sugg-${idx}`).remove();
-            socket.emit('apply_gemini_action', { action_type, target_id, field, new_value });
-        }
+        socket.on('gemini_chat_reply', (data) => {
+            addChatMessage(data.msg, 'bot');
+        });
+
+        socket.on('gemini_chat_error', (data) => {
+            addChatMessage(`Помилка: ${data.msg}`, 'bot');
+        });
+
     </script>
 </body>
 </html>
