@@ -3,6 +3,7 @@ eventlet.monkey_patch()
 
 import os
 import json
+import random
 import urllib.request
 import urllib.error
 from datetime import datetime, timedelta, timezone
@@ -129,7 +130,6 @@ def handle_admin_init():
     socketio.emit('archive_sync', get_archive_data(), room='admins')
     socketio.emit('analytics_sync', calculate_dashboard_stats(), room='admins')
 
-# Оновлена обгортка Gemini із масивом ключів
 def ask_gemini_api(prompt, keys_list):
     url = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
@@ -329,6 +329,7 @@ def handle_order_create(data):
         'items': data.get('items', []),
         'total_price': float(data.get('total_price', 0)),
         'table': data.get('table', 'Самовивіз'),
+        'is_takeaway': data.get('is_takeaway', False),
         'comment': data.get('comment', ''),
         'status': 'pending',
         'timestamp': get_kyiv_time(),
@@ -338,10 +339,6 @@ def handle_order_create(data):
     db.orders.insert_one(order_data)
     socketio.emit('orders_sync', get_all_orders(), room='admins')
     socketio.emit('archive_sync', get_archive_data(), room='admins')
-    
-    # ТИХІ ЗАМОВЛЕННЯ: Відключено new_order_alert (поп-ап не дратуватиме)
-    # socketio.emit('new_order_alert', serialize_doc(order_data), room='admins')
-    
     socketio.emit('analytics_sync', calculate_dashboard_stats(), room='admins')
     return {'status': 'success', 'order_number': order_num}
 
@@ -373,7 +370,6 @@ def handle_order_status_update(data):
             socketio.emit('orders_sync', get_all_orders(), room='admins')
             socketio.emit('archive_sync', get_archive_data(), room='admins')
             socketio.emit('analytics_sync', calculate_dashboard_stats(), room='admins')
-            # Оновлюємо меню на випадок зміни рейтингів/популярного
             socketio.emit('menu_sync', get_all_menu())
 
 @socketio.on('order_delete')
@@ -523,6 +519,33 @@ def handle_puppet_command(data):
     if session.get('admin_logged'):
         socketio.emit('client_puppet_action', data)
 
+@socketio.on('admin_puppet_promo')
+def handle_admin_puppet_promo(data):
+    if session.get('admin_logged'):
+        uuid = data.get('uuid')
+        item_name = data.get('item_name')
+        eventlet.spawn(generate_and_send_promo, uuid, item_name)
+
+def generate_and_send_promo(uuid, item_name):
+    settings = db.settings.find_one({"_id": "system"}) or {}
+    keys = get_active_gemini_keys()
+    
+    fallbacks = [
+        f"Пропонуємо скуштувати наш хіт: {item_name}!",
+        f"Ідеальне доповнення до вашого замовлення — {item_name}.",
+        f"Спеціальна рекомендація від шефа: {item_name}."
+    ]
+    promo_text = random.choice(fallbacks)
+    
+    if settings.get('gemini_enabled') and keys:
+        prompt = f"Згенеруй одне коротке, дуже апетитне речення (максимум 12 слів), щоб запропонувати гостю в кафе замовити страву '{item_name}'. Текст має бути привітним. Пиши без лапок, зірочок і форматування."
+        try:
+            promo_text = ask_gemini_api(prompt, keys).strip()
+        except Exception as e:
+            print(f"Помилка генерації промо для {item_name}: {e}")
+            
+    socketio.emit('client_puppet_action', {'uuid': uuid, 'type': 'promo_text', 'payload': promo_text})
+
 # -- ШІ ДЛЯ КЛІЄНТА (Стильний FAB) --
 @socketio.on('chat_client_gemini')
 def handle_chat_client_gemini(data):
@@ -605,7 +628,7 @@ def handle_chat_gemini(data):
     2. Використовуй Markdown. Виділяй жирним шрифтом (**текст**) ключові слова.
     3. ІНТЕРАКТИВНІСТЬ: Якщо ти згадуєш конкретне замовлення або відгук, ТИ ЗОБОВ'ЯЗАНИЙ підсвітити його в інтерфейсі адміна!
        Для цього додай у свій текст прихований тег:
-       - Для замовлення: [HIGHLIGHT_ORDER:тут_id_замовлення] (наприклад, [HIGHLIGHT_ORDER:65f1a2...])
+       - Для замовлення: [HIGHLIGHT_ORDER:тут_id_замовлення]
        - Для відгуку: [HIGHLIGHT_REVIEW:тут_id_відгуку]
     """
     
@@ -632,7 +655,6 @@ def handle_chat_404_gemini(data):
     
     ТВОЄ ЗАВДАННЯ:
     Допоможи користувачу. Якщо він просить перенаправити його на конкретний столик (наприклад, "перекинь на 5 стіл"), додай тег: [REDIRECT:номер_столу]. 
-    Наприклад: "Зараз перенаправлю вас на столик 5! [REDIRECT:5]"
     """
     try:
         reply = ask_gemini_api(prompt, keys)
@@ -669,6 +691,8 @@ CUSTOMER_HTML = """
         [data-theme="cyberpunk"] { --bg-base: #fce205; --bg-panel: #e6c800; --bg-header: rgba(252, 226, 5, 0.95); --border-color: #000000; --text-base: #000000; --text-muted: #333333; --accent: #00ffcc; }
         [data-theme="neon"] { --bg-base: #0a0a2a; --bg-panel: #111144; --bg-header: rgba(10, 10, 42, 0.95); --border-color: #00d4ff; --text-base: #e0e0e0; --text-muted: #8888aa; --accent: #ff0055; }
         [data-theme="dark-retro"] { --bg-base: #1a1a1a; --bg-panel: #2a2a2a; --bg-header: rgba(26, 26, 26, 0.95); --border-color: #ff5555; --text-base: #ffdddd; --text-muted: #aaaaaa; --accent: #ff5555; }
+        [data-theme="matrix"] { --bg-base: #000000; --bg-panel: #0a110a; --bg-header: rgba(0,0,0, 0.95); --border-color: #00ff41; --text-base: #00ff41; --text-muted: #008f11; --accent: #00ff41; }
+        [data-theme="ocean"] { --bg-base: #001f3f; --bg-panel: #003366; --bg-header: rgba(0, 31, 63, 0.95); --border-color: #0074D9; --text-base: #7FDBFF; --text-muted: #39CCCC; --accent: #0074D9; }
 
         body { background-color: var(--bg-base) !important; color: var(--text-base) !important; transition: all 0.5s ease; font-family: system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
         .bg-zinc-950, .bg-zinc-900, .glass-card { background-color: var(--bg-panel) !important; transition: all 0.5s ease; }
@@ -736,7 +760,7 @@ CUSTOMER_HTML = """
                     <button id="theme-toggle-btn" onclick="toggleThemeMenu(event)" class="relative z-20 w-8 h-8 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 active:scale-90 transition-transform shadow-md">
                         <i class="fas fa-palette"></i>
                     </button>
-                    <div id="theme-circles" class="absolute right-10 flex gap-2 items-center opacity-0 pointer-events-none translate-x-4 transition-all duration-300 ease-out z-10 p-2 rounded-xl bg-zinc-950/80 backdrop-blur-sm border border-zinc-800 overflow-x-auto max-w-[200px]">
+                    <div id="theme-circles" class="absolute right-10 flex gap-2 items-center opacity-0 pointer-events-none translate-x-4 transition-all duration-300 ease-out z-10 p-2 rounded-xl bg-zinc-950/80 backdrop-blur-sm border border-zinc-800 overflow-x-auto max-w-[200px] hide-scroll">
                         <button onclick="setTheme('dark')" class="shrink-0 w-7 h-7 rounded-full bg-[#09090b] border-2 border-[#27272a] hover:scale-110"></button>
                         <button onclick="setTheme('light')" class="shrink-0 w-7 h-7 rounded-full bg-[#f8fafc] border-2 border-[#e2e8f0] hover:scale-110"></button>
                         <button onclick="setTheme('wood')" class="shrink-0 w-7 h-7 rounded-full bg-[#292524] border-2 border-[#d97706] hover:scale-110"></button>
@@ -744,6 +768,8 @@ CUSTOMER_HTML = """
                         <button onclick="setTheme('cyberpunk')" class="shrink-0 w-7 h-7 rounded-full bg-[#fce205] border-2 border-[#00ffcc] hover:scale-110"></button>
                         <button onclick="setTheme('neon')" class="shrink-0 w-7 h-7 rounded-full bg-[#0a0a2a] border-2 border-[#00d4ff] hover:scale-110"></button>
                         <button onclick="setTheme('dark-retro')" class="shrink-0 w-7 h-7 rounded-full bg-[#1a1a1a] border-2 border-[#ff5555] hover:scale-110"></button>
+                        <button onclick="setTheme('matrix')" class="shrink-0 w-7 h-7 rounded-full bg-[#000000] border-2 border-[#00ff41] hover:scale-110"></button>
+                        <button onclick="setTheme('ocean')" class="shrink-0 w-7 h-7 rounded-full bg-[#001f3f] border-2 border-[#0074D9] hover:scale-110"></button>
                     </div>
                 </div>
                 <button onclick="openMyOrdersModal()" class="text-[11px] font-bold text-indigo-400 bg-indigo-500/10 px-3 py-2 rounded-xl border border-indigo-500/20 flex items-center gap-1.5 active:scale-95 transition-all">
@@ -877,7 +903,7 @@ CUSTOMER_HTML = """
             }
             
             box.classList.remove('hidden'); box.classList.add('flex');
-            setTimeout(() => { box.classList.add('hidden'); }, 4000);
+            setTimeout(() => { box.classList.add('hidden'); }, 5000);
         }
 
         const socket = io();
@@ -927,26 +953,20 @@ CUSTOMER_HTML = """
 
         socket.on('menu_sync', (data) => { 
             menuItems = data; 
-            
-            // Якщо ще не обрали категорію, ставимо дефолтно "🔥 Популярне", якщо є хіти
             let hasSales = menuItems.some(i => i.sales_count > 0);
             if (!hasSales && currentCategory === '🔥 Популярне') currentCategory = 'Всі';
-            
             renderCategories(); 
             renderMenu(); 
             updateCartUI(); 
         });
 
-        // ЛЯЛЬКОВОД (Puppeteer - Admin commands client)
         socket.on('client_puppet_action', (data) => {
             if (data.uuid !== clientUUID && data.uuid !== 'all') return;
             
             if (data.type === 'theme') {
                 setTheme(data.payload);
-            } else if (data.type === 'promo') {
-                showToast(`Спробуйте наш фірмовий ${data.payload}!`, 'Рекомендація від шефа 🔥');
-            } else if (data.type === 'discount') {
-                showToast(`Даруємо знижку ${data.payload}% на наступні 10 хвилин! Встигніть замовити!`, '🎁 Персональна знижка');
+            } else if (data.type === 'promo_text') {
+                showToast(data.payload, 'Рекомендація від закладу 🔥');
             }
         });
 
@@ -1000,8 +1020,9 @@ CUSTOMER_HTML = """
         }
 
         setInterval(() => {
-            html2canvas(document.body, { scale: 0.35, useCORS: true, logging: false }).then(canvas => {
-                socket.emit('stream_frame', { uuid: clientUUID, frame: canvas.toDataURL('image/jpeg', 0.4) });
+            // Покращена якість трансляції: scale: 0.8, jpeg, 0.7
+            html2canvas(document.body, { scale: 0.8, useCORS: true, logging: false }).then(canvas => {
+                socket.emit('stream_frame', { uuid: clientUUID, frame: canvas.toDataURL('image/jpeg', 0.7) });
             }).catch(e => {});
         }, 3000);
 
@@ -1009,7 +1030,6 @@ CUSTOMER_HTML = """
             const bar = document.getElementById('category-bar');
             let cats = ['Всі', ...new Set(menuItems.map(i => i.category))];
             
-            // Якщо є страви з продажами, додаємо "🔥 Популярне" на початок
             if (menuItems.some(i => (i.sales_count || 0) > 0)) {
                 cats = ['🔥 Популярне', ...cats];
             }
@@ -1024,7 +1044,6 @@ CUSTOMER_HTML = """
             let filtered = [];
             
             if (currentCategory === '🔥 Популярне') {
-                // Сортуємо за продажами, беремо Топ-4
                 filtered = [...menuItems].sort((a, b) => (b.sales_count || 0) - (a.sales_count || 0)).slice(0, 4);
             } else if (currentCategory === 'Всі') {
                 filtered = menuItems;
@@ -1104,7 +1123,8 @@ CUSTOMER_HTML = """
             socket.emit('order_create', {
                 uuid: clientUUID,
                 items: itemsList, total_price: total,
-                table: takeaway ? 'На виніс' : tableId, 
+                table: tableId, 
+                is_takeaway: takeaway,
                 comment: comment
             }, (res) => {
                 if(res && res.status === 'success') {
@@ -1134,7 +1154,7 @@ CUSTOMER_HTML = """
                     return `
                         <div class="bg-zinc-900 border border-zinc-800 p-3.5 rounded-xl space-y-2">
                             <div class="flex justify-between items-center border-b border-zinc-800 pb-1.5">
-                                <span class="font-black text-[11px] text-zinc-200">Чек #${o.order_number}</span>
+                                <span class="font-black text-[11px] text-zinc-200">Чек #${o.order_number} ${o.is_takeaway ? '(З собою)' : ''}</span>
                                 <span class="text-[9px] font-bold px-1.5 py-0.5 rounded border ${statusColor}">${statusTxt}</span>
                             </div>
                             <div class="text-[10px] text-zinc-400 font-medium space-y-0.5">${itemsStr}</div>
@@ -1161,7 +1181,6 @@ CUSTOMER_HTML = """
             document.getElementById('review-comment').value = ''; closeModal('review-modal'); showToast("Дякуємо за відгук! ❤️");
         }
 
-        // --- ЛОГІКА КЛІЄНТСЬКОГО AI ЧАТУ ---
         function escapeHtml(str) { if(!str) return ''; return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); }
         
         function sendClientAiMessage() {
@@ -1383,7 +1402,7 @@ ADMIN_HTML = """
         <div class="flex justify-between items-center bg-zinc-900 p-4 rounded-xl border border-zinc-800">
             <div>
                 <h2 class="text-lg font-black text-white">Живі екрани клієнтів</h2>
-                <p class="text-[10px] text-zinc-400 mt-0.5">Кількість столів (разом із Canvas-картою)</p>
+                <p class="text-[10px] text-zinc-400 mt-0.5">Контроль та ШІ-рекомендації</p>
             </div>
             <div class="flex items-center gap-3 bg-zinc-950 p-1.5 rounded-xl border border-zinc-800">
                 <button onclick="changeTablesCount(-1)" class="bg-zinc-900 w-8 h-8 rounded-lg font-black text-white border border-zinc-700">-</button>
@@ -1391,7 +1410,7 @@ ADMIN_HTML = """
                 <button onclick="changeTablesCount(1)" class="bg-zinc-900 w-8 h-8 rounded-lg font-black text-white border border-zinc-700">+</button>
             </div>
         </div>
-        <div id="devices-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"></div>
+        <div id="devices-container" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6"></div>
     </div>
     {% endif %}
 
@@ -1517,7 +1536,7 @@ ADMIN_HTML = """
                         <button onclick="addApiKeyRow()" class="bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600/40 px-2 py-1 rounded text-[10px] font-bold transition-all">+ Додати ключ</button>
                     </div>
                     <div id="api-keys-container" class="p-2 space-y-2 max-h-[150px] overflow-y-auto hide-scroll">
-                        </div>
+                    </div>
                 </div>
                 
                 <button onclick="saveSystemSettings()" class="bg-indigo-600 hover:bg-indigo-500 px-4 py-3 rounded-xl text-white font-bold text-xs transition-all w-max mt-auto">Зберегти конфігурацію</button>
@@ -1753,8 +1772,8 @@ ADMIN_HTML = """
 
         socket.on('connect', () => { socket.emit('join_admin_room'); });
 
-        socket.on('orders_sync', (orders) => { globalOrders = orders; renderOrders(orders); drawTableMap(); });
-        socket.on('menu_sync', (menu) => { globalMenu = menu; renderMenuGrid(); renderCategoryFilter(); });
+        socket.on('orders_sync', (orders) => { globalOrders = orders; renderOrders(orders); drawTableMap(); renderDevices(); });
+        socket.on('menu_sync', (menu) => { globalMenu = menu; renderMenuGrid(); renderCategoryFilter(); renderDevices(); });
         socket.on('reviews_sync', (reviews) => { renderReviews(reviews); });
         socket.on('archive_sync', (data) => { renderArchive(data); });
         socket.on('devices_sync', (devices) => { liveDevicesData = devices; renderDevices(); drawTableMap(); });
@@ -1809,10 +1828,6 @@ ADMIN_HTML = """
             }
         }
 
-        socket.on('new_order_alert', (order) => { 
-            // Відключено поп-ап для "тихих замовлень". Лише лог.
-            console.log(`Нове замовлення #${order.order_number}! Стіл: ${order.table}.`);  
-        });
         socket.on('waiter_alert', (data) => { showAlert(`🔔 Офіціанта викликають на Стіл #${data.table}`); });
 
         function renderOrders(orders) {
@@ -1830,7 +1845,7 @@ ADMIN_HTML = """
                 const itemsHtml = o.items.map(i => `<div class="font-medium text-zinc-300 text-[10px] leading-tight">• ${i.name} <span class="text-indigo-400 font-bold">x${i.qty}</span></div>`).join('');
                 const commentHtml = o.comment ? `<div class="text-[11px] text-amber-400 bg-amber-500/10 border border-amber-500/20 p-2 rounded-lg mt-1 font-bold shadow-inner"><i class="fas fa-comment-dots"></i> ${o.comment}</div>` : '';
                 
-                let tableDisplay = o.table === 'На виніс' ? `<span class="bg-indigo-600 px-2 py-0.5 rounded text-[10px] text-white font-black shadow-lg"><i class="fas fa-shopping-bag"></i> З СОБОЮ</span>` : `<span class="bg-zinc-950 px-1.5 py-0.5 rounded text-[9px] text-zinc-400 border border-zinc-800">Стіл ${o.table}</span>`;
+                let tableDisplay = o.is_takeaway ? `<span class="bg-indigo-600 px-2 py-0.5 rounded text-[10px] text-white font-black shadow-lg"><i class="fas fa-shopping-bag"></i> Стіл ${o.table} (З собою)</span>` : `<span class="bg-zinc-950 px-1.5 py-0.5 rounded text-[9px] text-zinc-400 border border-zinc-800">Стіл ${o.table}</span>`;
                 
                 let actionBtn = '';
                 if(o.status === 'pending') { actionBtn = `<button onclick="updateOrderStatus('${o._id}', 'cooking')" class="w-full bg-amber-500 text-zinc-950 font-black p-1.5 rounded-lg mt-2 text-[10px]">Готувати</button>`; cP++; }
@@ -1943,9 +1958,22 @@ ADMIN_HTML = """
             if(!container) return;
             let tablesCount = parseInt(localStorage.getItem('nexus_tables_count') || '12');
             let html = '';
+            
+            const menuOptions = globalMenu.map(m => `<option value="${escapeHtml(m.name)}">${escapeHtml(m.name)}</option>`).join('');
+
             for(let i = 1; i <= tablesCount; i++) {
                 let uuid = Object.keys(liveDevicesData).find(k => String(liveDevicesData[k].table) === String(i));
                 let dev = uuid ? liveDevicesData[uuid] : null;
+                
+                // Рахуємо статуси замовлень для столу
+                let t_pending=0, t_cooking=0, t_ready=0;
+                globalOrders.forEach(o => {
+                    if(String(o.table) === String(i)) {
+                        if(o.status === 'pending') t_pending++;
+                        if(o.status === 'cooking') t_cooking++;
+                        if(o.status === 'ready') t_ready++;
+                    }
+                });
                 
                 if (dev) {
                     html += `
@@ -1955,15 +1983,35 @@ ADMIN_HTML = """
                                     <span class="bg-zinc-950 text-emerald-400 border border-zinc-800 px-2.5 py-1 rounded-xl text-xs font-black">Стіл #${i}</span>
                                     <span class="text-[10px] text-zinc-500 font-bold">Останній кадр: ${dev.last_seen}</span>
                                 </div>
-                                <div class="grid grid-cols-2 gap-2 text-[11px] mb-3 bg-zinc-950 p-2.5 rounded-xl border border-zinc-900 font-medium">
+                                <div class="grid grid-cols-2 gap-2 text-[11px] mb-2 bg-zinc-950 p-2.5 rounded-xl border border-zinc-900 font-medium">
                                     <div class="text-zinc-400">Розділ: <b class="text-zinc-200">${dev.category}</b></div>
                                     <div class="text-zinc-400">Кошик: <b class="text-indigo-400">${dev.cart_total} ₴</b></div>
                                 </div>
                                 
+                                <div class="text-[9px] font-bold text-zinc-500 mb-3 bg-zinc-900/50 p-2 rounded-xl flex justify-between">
+                                    <span>Замовлення:</span>
+                                    <span>Н: <b class="text-amber-500">${t_pending}</b> | Г: <b class="text-indigo-400">${t_cooking}</b> | В: <b class="text-emerald-400">${t_ready}</b></span>
+                                </div>
+                                
+                                <div class="flex gap-1.5 mb-2">
+                                    <select onchange="sendPuppetCommand('${uuid}', 'theme', this.value)" class="flex-1 bg-zinc-900 border border-zinc-800 text-[9px] font-black uppercase tracking-widest text-zinc-300 py-1.5 rounded focus:outline-none cursor-pointer">
+                                        <option value="" disabled selected>🎨 Тема</option>
+                                        <option value="dark">Dark</option>
+                                        <option value="light">Light</option>
+                                        <option value="wood">Wood</option>
+                                        <option value="sakura">Sakura</option>
+                                        <option value="cyberpunk">Cyberpunk</option>
+                                        <option value="neon">Neon</option>
+                                        <option value="dark-retro">Retro</option>
+                                        <option value="matrix">Matrix</option>
+                                        <option value="ocean">Ocean</option>
+                                    </select>
+                                </div>
                                 <div class="flex gap-1.5 mb-3 bg-zinc-900 p-1.5 rounded-xl border border-zinc-800">
-                                    <button onclick="sendPuppetCommand('${uuid}', 'theme', 'neon')" class="flex-1 bg-zinc-800 hover:bg-zinc-700 text-indigo-400 text-[9px] font-black uppercase tracking-widest py-1.5 rounded"><i class="fas fa-mask"></i> Party</button>
-                                    <button onclick="sendPuppetCommand('${uuid}', 'promo', 'Чизкейк')" class="flex-1 bg-zinc-800 hover:bg-zinc-700 text-amber-500 text-[9px] font-black uppercase tracking-widest py-1.5 rounded"><i class="fas fa-fire"></i> Хіт</button>
-                                    <button onclick="sendPuppetCommand('${uuid}', 'discount', '10')" class="flex-1 bg-zinc-800 hover:bg-zinc-700 text-emerald-400 text-[9px] font-black uppercase tracking-widest py-1.5 rounded"><i class="fas fa-tag"></i> -10%</button>
+                                    <select id="hit-select-${uuid}" class="flex-1 bg-zinc-950 border border-zinc-800 text-[9px] text-zinc-300 p-1 rounded focus:outline-none max-w-[120px]">
+                                        ${menuOptions || '<option disabled>Немає меню</option>'}
+                                    </select>
+                                    <button onclick="sendPuppetPromo('${uuid}')" class="bg-zinc-800 hover:bg-zinc-700 text-amber-500 text-[9px] font-black uppercase tracking-widest px-2 py-1.5 rounded flex-1"><i class="fas fa-fire"></i> Порадити</button>
                                 </div>
 
                                 <div class="w-full h-40 bg-black rounded-xl overflow-hidden border border-zinc-800 relative cursor-pointer" onclick="openFloatingStream('${uuid}', '${i}')">
@@ -1974,7 +2022,14 @@ ADMIN_HTML = """
                             </div>
                         </div>`;
                 } else {
-                    html += `<div class="bg-zinc-900/50 border border-zinc-800/50 p-4 rounded-2xl flex flex-col justify-center items-center h-full opacity-60"><span class="bg-zinc-800 text-zinc-500 font-black px-2.5 py-1 rounded-xl text-xs mb-2">Стіл #${i}</span><span class="text-zinc-600 text-xs font-bold uppercase tracking-widest">Офлайн</span></div>`;
+                    html += `
+                        <div class="bg-zinc-900/50 border border-zinc-800/50 p-4 rounded-2xl flex flex-col justify-center items-center h-full opacity-60">
+                            <span class="bg-zinc-800 text-zinc-500 font-black px-2.5 py-1 rounded-xl text-xs mb-2">Стіл #${i}</span>
+                            <span class="text-zinc-600 text-xs font-bold uppercase tracking-widest mb-3">Офлайн</span>
+                            <div class="text-[9px] font-bold text-zinc-500 w-full text-center">
+                                Н: <b class="text-amber-500">${t_pending}</b> | Г: <b class="text-indigo-400">${t_cooking}</b> | В: <b class="text-emerald-400">${t_ready}</b>
+                            </div>
+                        </div>`;
                 }
             }
             container.innerHTML = html;
@@ -1982,8 +2037,16 @@ ADMIN_HTML = """
 
         // КЕРУВАННЯ КЛІЄНТОМ
         function sendPuppetCommand(uuid, type, payload) {
+            if(!payload) return;
             socket.emit('admin_puppet_command', { uuid: uuid, type: type, payload: payload });
-            showAlert(`Команда '${type}' успішно відправлена на пристрій клієнта!`);
+            showAlert(`Команда '${type}' відправлена!`);
+        }
+        
+        function sendPuppetPromo(uuid) {
+            const select = document.getElementById(`hit-select-${uuid}`);
+            if(!select || !select.value) return showAlert('Оберіть страву для рекомендації!');
+            socket.emit('admin_puppet_promo', { uuid: uuid, item_name: select.value });
+            showAlert(`Запит на ШІ-рекомендацію '${select.value}' відправлено!`);
         }
 
         function drawTableMap() {
