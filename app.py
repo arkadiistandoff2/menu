@@ -29,8 +29,9 @@ try:
         db.settings.insert_one({
             "_id": "system", 
             "gemini_enabled": False, 
-            "gemini_token": "",
-            "gemini_token_2": "",
+            "api_keys": [
+                {"id": "init_1", "provider": "gemini", "key": "", "active": True}
+            ],
             "gemini_autoreply": False,
             "gemini_access_menu": True,
             "gemini_access_orders": True,
@@ -67,7 +68,18 @@ def serialize_doc(doc):
     return d
 
 def get_all_menu(): 
-    return [serialize_doc(i) for i in db.menu.find()]
+    # Динамічно рахуємо продажі для "Топ-страв"
+    menu = [serialize_doc(i) for i in db.menu.find()]
+    orders = list(db.orders.find({"status": "Закрито"}))
+    sales = {}
+    for o in orders:
+        for item in o.get('items', []):
+            sales[item['id']] = sales.get(item['id'], 0) + int(item.get('qty', 1))
+            
+    for m in menu:
+        m['sales_count'] = sales.get(str(m['_id']), 0)
+        
+    return menu
 
 def get_all_orders(): 
     return [serialize_doc(o) for o in db.orders.find().sort("timestamp", -1)]
@@ -117,30 +129,31 @@ def handle_admin_init():
     socketio.emit('archive_sync', get_archive_data(), room='admins')
     socketio.emit('analytics_sync', calculate_dashboard_stats(), room='admins')
 
-# Обгортка для запитів до Gemini із запасним токеном
-def ask_gemini_api(prompt, token1, token2=""):
+# Оновлена обгортка Gemini із масивом ключів
+def ask_gemini_api(prompt, keys_list):
     url = "https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
     
-    def make_request(t):
-        headers = {'Content-Type': 'application/json', 'x-goog-api-key': t.strip()}
-        req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method='POST')
-        with urllib.request.urlopen(req) as response:
-            res_data = json.loads(response.read().decode())
-            return res_data['candidates'][0]['content']['parts'][0]['text']
+    last_error = None
+    for k in keys_list:
+        if not k: continue
+        try:
+            headers = {'Content-Type': 'application/json', 'x-goog-api-key': k.strip()}
+            req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method='POST')
+            with urllib.request.urlopen(req) as response:
+                res_data = json.loads(response.read().decode())
+                return res_data['candidates'][0]['content']['parts'][0]['text']
+        except Exception as e:
+            print(f"Gemini token {k[:5]}... failed: {e}")
+            last_error = e
+            continue
+            
+    raise Exception(f"Усі доступні токени не спрацювали. Помилка: {last_error}")
 
-    try:
-        if not token1: raise Exception("No primary token")
-        return make_request(token1)
-    except Exception as e:
-        print(f"Primary Gemini token failed: {e}")
-        if token2:
-            print("Trying backup token...")
-            try:
-                return make_request(token2)
-            except Exception as e2:
-                raise Exception(f"Обидва токени не спрацювали. Помилка: {e2}")
-        raise e
+def get_active_gemini_keys():
+    settings = db.settings.find_one({"_id": "system"}) or {}
+    api_keys = settings.get('api_keys', [])
+    return [k['key'] for k in api_keys if k['provider'] == 'gemini' and k['active']]
 
 # ==============================================================================
 # 3. МАРШРУТИ FLASK (HTTP ROUTES)
@@ -167,6 +180,7 @@ def admin():
         role=session.get('role'), 
         permissions=session.get('permissions', {}),
         settings=settings,
+        settings_json=json.dumps(settings),
         users_json=json.dumps(users)
     )
 
@@ -324,7 +338,10 @@ def handle_order_create(data):
     db.orders.insert_one(order_data)
     socketio.emit('orders_sync', get_all_orders(), room='admins')
     socketio.emit('archive_sync', get_archive_data(), room='admins')
-    socketio.emit('new_order_alert', serialize_doc(order_data), room='admins')
+    
+    # ТИХІ ЗАМОВЛЕННЯ: Відключено new_order_alert (поп-ап не дратуватиме)
+    # socketio.emit('new_order_alert', serialize_doc(order_data), room='admins')
+    
     socketio.emit('analytics_sync', calculate_dashboard_stats(), room='admins')
     return {'status': 'success', 'order_number': order_num}
 
@@ -356,6 +373,8 @@ def handle_order_status_update(data):
             socketio.emit('orders_sync', get_all_orders(), room='admins')
             socketio.emit('archive_sync', get_archive_data(), room='admins')
             socketio.emit('analytics_sync', calculate_dashboard_stats(), room='admins')
+            # Оновлюємо меню на випадок зміни рейтингів/популярного
+            socketio.emit('menu_sync', get_all_menu())
 
 @socketio.on('order_delete')
 def handle_order_delete(data):
@@ -415,15 +434,14 @@ def handle_review_add(data):
     
     settings = db.settings.find_one({"_id": "system"})
     if settings and settings.get('gemini_enabled') and settings.get('gemini_autoreply'):
-        token1 = settings.get('gemini_token', '')
-        token2 = settings.get('gemini_token_2', '')
-        if token1 or token2:
-            eventlet.spawn(auto_reply_to_review, str(res.inserted_id), review_data, token1, token2)
+        keys = get_active_gemini_keys()
+        if keys:
+            eventlet.spawn(auto_reply_to_review, str(res.inserted_id), review_data, keys)
 
-def auto_reply_to_review(review_id, review_data, token1, token2):
+def auto_reply_to_review(review_id, review_data, keys):
     prompt = f"Користувач {review_data['name']} залишив відгук про наш заклад: '{review_data['text']}' з оцінкою {review_data['rating']} зірок. Напиши коротку, стильну та ввічливу відповідь від імені адміністрації кафе (1-2 речення). Без маркдауну."
     try:
-        reply = ask_gemini_api(prompt, token1, token2).strip()
+        reply = ask_gemini_api(prompt, keys).strip()
         db.reviews.update_one({"_id": ObjectId(review_id)}, {"$set": {"admin_reply": reply}})
         socketio.emit('reviews_sync', get_all_reviews())
     except Exception as e:
@@ -470,8 +488,7 @@ def handle_admin_save_settings(data):
     if session.get('role') == 'master':
         db.settings.update_one({"_id": "system"}, {"$set": {
             "gemini_enabled": data.get("gemini_enabled", False),
-            "gemini_token": data.get("gemini_token", ""),
-            "gemini_token_2": data.get("gemini_token_2", ""),
+            "api_keys": data.get("api_keys", []),
             "gemini_autoreply": data.get("gemini_autoreply", False),
             "gemini_access_menu": data.get("gemini_access_menu", True),
             "gemini_access_orders": data.get("gemini_access_orders", True),
@@ -500,14 +517,51 @@ def handle_admin_delete_user(data):
         users = list(db.users.find({}, {'_id': 0}))
         socketio.emit('users_sync', users, room=request.sid)
 
+# -- КЕРУВАННЯ КЛІЄНТАМИ (Puppeteer) --
+@socketio.on('admin_puppet_command')
+def handle_puppet_command(data):
+    if session.get('admin_logged'):
+        socketio.emit('client_puppet_action', data)
+
+# -- ШІ ДЛЯ КЛІЄНТА (Стильний FAB) --
+@socketio.on('chat_client_gemini')
+def handle_chat_client_gemini(data):
+    user_msg = data.get('message', '')
+    table = data.get('table', 'Невідомо')
+    settings = db.settings.find_one({"_id": "system"}) or {}
+    keys = get_active_gemini_keys()
+    
+    if not settings.get('gemini_enabled') or not keys:
+        socketio.emit('gemini_client_error', {'msg': 'ШІ-помічник зараз недоступний.'}, room=request.sid)
+        return
+        
+    menu_str = json.dumps([{"назва": m['name'], "ціна": m['price']} for m in get_all_menu()], ensure_ascii=False)
+    
+    prompt = f"""
+    Ти - дуже ввічливий, стильний і дружній ШІ-офіціант закладу Nexus Cafe. 
+    Ти допомагаєш гостю за столиком {table}.
+    Ось наше меню: {menu_str}
+    
+    Запит гостя: "{user_msg}"
+    
+    Відповідай коротко (1-3 речення), привітно, без форматування markdown. Допоможи обрати страву або дай пораду.
+    """
+    try:
+        reply = ask_gemini_api(prompt, keys)
+        socketio.emit('gemini_client_reply', {'msg': reply}, room=request.sid)
+    except Exception as e:
+        socketio.emit('gemini_client_error', {'msg': str(e)}, room=request.sid)
+
 # -- GEMINI CHAT INTEGRATION (DYNAMIC CONTEXT & HIGHLIGHTS) --
 @socketio.on('chat_gemini')
 def handle_chat_gemini(data):
     if not session.get('admin_logged'): return
     
     settings = db.settings.find_one({"_id": "system"}) or {}
-    if not settings.get('gemini_enabled') or (not settings.get('gemini_token') and not settings.get('gemini_token_2')):
-        socketio.emit('gemini_chat_error', {'msg': 'Gemini не увімкнено або відсутній токен у налаштуваннях.'}, room=request.sid)
+    keys = get_active_gemini_keys()
+    
+    if not settings.get('gemini_enabled') or not keys:
+        socketio.emit('gemini_chat_error', {'msg': 'Gemini не увімкнено або відсутні активні токени у налаштуваннях.'}, room=request.sid)
         return
         
     user_msg = data.get('message', '')
@@ -517,11 +571,9 @@ def handle_chat_gemini(data):
     
     if settings.get('gemini_access_menu'):
         menu = get_all_menu()
-        global_orders = list(db.orders.find({"status": "Закрито"}))
         menu_data = []
         for item in menu:
-            sales_count = sum(int(i.get('qty', 0)) for o in global_orders for i in o.get('items', []) if i.get('id') == item['_id'])
-            menu_data.append({"id": item['_id'], "назва": item['name'], "ціна": item['price'], "категорія": item['category'], "продано_раз": sales_count})
+            menu_data.append({"id": item['_id'], "назва": item['name'], "ціна": item['price'], "категорія": item['category'], "продано_раз": item.get('sales_count', 0)})
         context_blocks.append(f"ДАНІ ПРО ТОВАРИ:\n{json.dumps(menu_data, ensure_ascii=False)}")
 
     if settings.get('gemini_access_orders'):
@@ -550,30 +602,27 @@ def handle_chat_gemini(data):
     
     ТВОЄ ЗАВДАННЯ ТА ПРАВИЛА:
     1. Надай детальну аналітику.
-    2. Використовуй Markdown. Виділяй жирним шрифтом (**текст**) ключові слова - вони будуть світитися неоном.
+    2. Використовуй Markdown. Виділяй жирним шрифтом (**текст**) ключові слова.
     3. ІНТЕРАКТИВНІСТЬ: Якщо ти згадуєш конкретне замовлення або відгук, ТИ ЗОБОВ'ЯЗАНИЙ підсвітити його в інтерфейсі адміна!
        Для цього додай у свій текст прихований тег:
        - Для замовлення: [HIGHLIGHT_ORDER:тут_id_замовлення] (наприклад, [HIGHLIGHT_ORDER:65f1a2...])
        - Для відгуку: [HIGHLIGHT_REVIEW:тут_id_відгуку]
-       Система сама виріже цей тег і змусить блок моргати на екрані користувача.
     """
     
     try:
-        reply = ask_gemini_api(prompt, settings.get('gemini_token', ''), settings.get('gemini_token_2', ''))
+        reply = ask_gemini_api(prompt, keys)
         socketio.emit('gemini_chat_reply', {'msg': reply}, room=request.sid)
     except Exception as e:
         socketio.emit('gemini_chat_error', {'msg': str(e)}, room=request.sid)
-
 
 # -- 404 CHAT INTEGRATION --
 @socketio.on('chat_404_gemini')
 def handle_chat_404_gemini(data):
     user_msg = data.get('message', '')
     settings = db.settings.find_one({"_id": "system"}) or {}
-    token1 = settings.get('gemini_token', '')
-    token2 = settings.get('gemini_token_2', '')
+    keys = get_active_gemini_keys()
     
-    if not settings.get('gemini_enabled') or (not token1 and not token2):
+    if not settings.get('gemini_enabled') or not keys:
         socketio.emit('gemini_404_error', {'msg': 'Вибачте, ШІ-помічник зараз недоступний.'}, room=request.sid)
         return
         
@@ -582,12 +631,11 @@ def handle_chat_404_gemini(data):
     Запит користувача: "{user_msg}"
     
     ТВОЄ ЗАВДАННЯ:
-    Допоможи користувачу. Якщо він просить перенаправити його на конкретний столик (наприклад, "перекинь на 5 стіл", "хочу за 12 столик"), ти ПОВИНЕН додати у свою відповідь спеціальний тег у форматі: [REDIRECT:номер_столу]. 
+    Допоможи користувачу. Якщо він просить перенаправити його на конкретний столик (наприклад, "перекинь на 5 стіл"), додай тег: [REDIRECT:номер_столу]. 
     Наприклад: "Зараз перенаправлю вас на столик 5! [REDIRECT:5]"
-    Якщо він просто спілкується, відповідай ввічливо та порадь йому перейти на сторінку столика або головну сторінку.
     """
     try:
-        reply = ask_gemini_api(prompt, token1, token2)
+        reply = ask_gemini_api(prompt, keys)
         socketio.emit('gemini_404_reply', {'msg': reply}, room=request.sid)
     except Exception as e:
         socketio.emit('gemini_404_error', {'msg': str(e)}, room=request.sid)
@@ -618,6 +666,9 @@ CUSTOMER_HTML = """
         [data-theme="light"] { --bg-base: #f8fafc; --bg-panel: #ffffff; --bg-header: rgba(248, 250, 252, 0.95); --border-color: #e2e8f0; --text-base: #0f172a; --text-muted: #64748b; --accent: #2563eb; }
         [data-theme="wood"] { --bg-base: #292524; --bg-panel: #44403c; --bg-header: rgba(41, 37, 36, 0.95); --border-color: #57534e; --text-base: #fef3c7; --text-muted: #d6d3d1; --accent: #d97706; }
         [data-theme="sakura"] { --bg-base: #2e1065; --bg-panel: #4c1d95; --bg-header: rgba(46, 16, 101, 0.95); --border-color: #6d28d9; --text-base: #fdf4ff; --text-muted: #d8b4fe; --accent: #ec4899; }
+        [data-theme="cyberpunk"] { --bg-base: #fce205; --bg-panel: #e6c800; --bg-header: rgba(252, 226, 5, 0.95); --border-color: #000000; --text-base: #000000; --text-muted: #333333; --accent: #00ffcc; }
+        [data-theme="neon"] { --bg-base: #0a0a2a; --bg-panel: #111144; --bg-header: rgba(10, 10, 42, 0.95); --border-color: #00d4ff; --text-base: #e0e0e0; --text-muted: #8888aa; --accent: #ff0055; }
+        [data-theme="dark-retro"] { --bg-base: #1a1a1a; --bg-panel: #2a2a2a; --bg-header: rgba(26, 26, 26, 0.95); --border-color: #ff5555; --text-base: #ffdddd; --text-muted: #aaaaaa; --accent: #ff5555; }
 
         body { background-color: var(--bg-base) !important; color: var(--text-base) !important; transition: all 0.5s ease; font-family: system-ui, -apple-system, sans-serif; -webkit-tap-highlight-color: transparent; }
         .bg-zinc-950, .bg-zinc-900, .glass-card { background-color: var(--bg-panel) !important; transition: all 0.5s ease; }
@@ -634,13 +685,19 @@ CUSTOMER_HTML = """
         .hide-scroll::-webkit-scrollbar { display: none; }
         .glass-card { border: 1px solid var(--border-color); }
         .glass-card:hover { border-color: var(--accent); box-shadow: 0 0 15px rgba(0,0,0,0.1); }
+        
+        .ai-fab { position: fixed; bottom: 85px; right: 16px; z-index: 45; transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        .ai-fab:active { transform: scale(0.9); }
     </style>
 </head>
 <body class="pb-28 relative antialiased" data-theme="dark">
 
     <div id="toast-box" class="fixed top-4 left-3 right-3 z-50 hidden bg-zinc-900 border border-zinc-800 p-3.5 rounded-2xl shadow-2xl items-center gap-3 transition-all duration-300">
         <i class="fas fa-info-circle text-indigo-500 text-lg"></i>
-        <p id="toast-text" class="text-xs font-bold text-zinc-200 leading-tight"></p>
+        <div class="flex-1">
+            <div id="toast-title" class="text-[9px] uppercase font-black text-indigo-400 tracking-widest hidden mb-0.5"></div>
+            <p id="toast-text" class="text-xs font-bold text-zinc-200 leading-tight"></p>
+        </div>
     </div>
 
     <header class="fixed top-0 left-0 right-0 z-40 p-3 flex justify-between items-center border-b border-zinc-800">
@@ -679,11 +736,14 @@ CUSTOMER_HTML = """
                     <button id="theme-toggle-btn" onclick="toggleThemeMenu(event)" class="relative z-20 w-8 h-8 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 active:scale-90 transition-transform shadow-md">
                         <i class="fas fa-palette"></i>
                     </button>
-                    <div id="theme-circles" class="absolute right-10 flex gap-2 items-center opacity-0 pointer-events-none translate-x-4 transition-all duration-300 ease-out z-10">
-                        <button onclick="setTheme('dark')" class="w-7 h-7 rounded-full bg-[#09090b] border-2 border-[#27272a] shadow-lg transform hover:scale-110 active:scale-95 transition-transform"></button>
-                        <button onclick="setTheme('light')" class="w-7 h-7 rounded-full bg-[#f8fafc] border-2 border-[#e2e8f0] shadow-lg transform hover:scale-110 active:scale-95 transition-transform"></button>
-                        <button onclick="setTheme('wood')" class="w-7 h-7 rounded-full bg-[#292524] border-2 border-[#d97706] shadow-lg transform hover:scale-110 active:scale-95 transition-transform"></button>
-                        <button onclick="setTheme('sakura')" class="w-7 h-7 rounded-full bg-[#4c1d95] border-2 border-[#ec4899] shadow-lg transform hover:scale-110 active:scale-95 transition-transform"></button>
+                    <div id="theme-circles" class="absolute right-10 flex gap-2 items-center opacity-0 pointer-events-none translate-x-4 transition-all duration-300 ease-out z-10 p-2 rounded-xl bg-zinc-950/80 backdrop-blur-sm border border-zinc-800 overflow-x-auto max-w-[200px]">
+                        <button onclick="setTheme('dark')" class="shrink-0 w-7 h-7 rounded-full bg-[#09090b] border-2 border-[#27272a] hover:scale-110"></button>
+                        <button onclick="setTheme('light')" class="shrink-0 w-7 h-7 rounded-full bg-[#f8fafc] border-2 border-[#e2e8f0] hover:scale-110"></button>
+                        <button onclick="setTheme('wood')" class="shrink-0 w-7 h-7 rounded-full bg-[#292524] border-2 border-[#d97706] hover:scale-110"></button>
+                        <button onclick="setTheme('sakura')" class="shrink-0 w-7 h-7 rounded-full bg-[#4c1d95] border-2 border-[#ec4899] hover:scale-110"></button>
+                        <button onclick="setTheme('cyberpunk')" class="shrink-0 w-7 h-7 rounded-full bg-[#fce205] border-2 border-[#00ffcc] hover:scale-110"></button>
+                        <button onclick="setTheme('neon')" class="shrink-0 w-7 h-7 rounded-full bg-[#0a0a2a] border-2 border-[#00d4ff] hover:scale-110"></button>
+                        <button onclick="setTheme('dark-retro')" class="shrink-0 w-7 h-7 rounded-full bg-[#1a1a1a] border-2 border-[#ff5555] hover:scale-110"></button>
                     </div>
                 </div>
                 <button onclick="openMyOrdersModal()" class="text-[11px] font-bold text-indigo-400 bg-indigo-500/10 px-3 py-2 rounded-xl border border-indigo-500/20 flex items-center gap-1.5 active:scale-95 transition-all">
@@ -696,6 +756,41 @@ CUSTOMER_HTML = """
         
         <div class="grid grid-cols-2 gap-3" id="menu-grid"></div>
     </main>
+
+    <button onclick="openModal('client-ai-modal')" class="ai-fab w-12 h-12 bg-indigo-600 rounded-full shadow-[0_0_15px_rgba(79,70,229,0.5)] flex items-center justify-center text-white border border-indigo-400/50">
+        <i class="fas fa-sparkles text-lg"></i>
+    </button>
+
+    <div id="client-ai-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm hidden flex-col justify-end">
+        <div class="bg-zinc-950 border-t border-indigo-500/30 rounded-t-[2rem] h-[75vh] flex flex-col p-5 shadow-[0_-10px_30px_rgba(79,70,229,0.15)]">
+            <div class="flex justify-between items-center mb-3">
+                <h2 class="text-lg font-black flex items-center gap-2 text-indigo-400"><i class="fas fa-sparkles"></i> AI Офіціант</h2>
+                <button onclick="closeModal('client-ai-modal')" class="text-zinc-500 p-2"><i class="fas fa-times text-lg"></i></button>
+            </div>
+            <div id="client-ai-history" class="flex-1 overflow-y-auto space-y-4 my-2 pr-1 hide-scroll">
+                <div class="flex flex-col gap-1 items-start">
+                    <div class="bg-zinc-900 border border-indigo-500/30 text-zinc-200 text-xs p-3 rounded-xl rounded-tl-none max-w-[85%]">
+                        Привіт! Я ШІ-помічник цього закладу. Чим можу допомогти? Підказати щось з меню чи порадити напій?
+                    </div>
+                </div>
+            </div>
+            
+            <div id="client-ai-loading" class="hidden pb-2 pl-1">
+                <div class="flex gap-1">
+                    <span class="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce"></span>
+                    <span class="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce" style="animation-delay: 0.1s"></span>
+                    <span class="w-1.5 h-1.5 bg-indigo-500 rounded-full animate-bounce" style="animation-delay: 0.2s"></span>
+                </div>
+            </div>
+            
+            <div class="mt-2 pt-3 border-t border-zinc-800 flex gap-2">
+                <input type="text" id="client-ai-input" placeholder="Запитайте щось..." class="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-3 text-xs text-zinc-200 focus:outline-none focus:border-indigo-500" onkeypress="if(event.key === 'Enter') sendClientAiMessage()">
+                <button onclick="sendClientAiMessage()" class="bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl px-4 py-3 text-xs font-bold transition-colors">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+        </div>
+    </div>
 
     <div id="float-cart-bar" class="fixed bottom-0 left-0 right-0 p-3 z-40 bg-zinc-950/95 backdrop-blur-md hidden border-t border-zinc-900">
         <button onclick="openModal('cart-modal')" class="w-full bg-indigo-600 active:bg-indigo-500 text-white p-3.5 rounded-2xl shadow-xl flex justify-between items-center border border-indigo-500/30 transition-all">
@@ -769,16 +864,25 @@ CUSTOMER_HTML = """
     </div>
 
     <script>
-        function showToast(msg) {
+        function showToast(msg, title = null) {
             const box = document.getElementById('toast-box');
             document.getElementById('toast-text').innerText = msg;
+            
+            const titleEl = document.getElementById('toast-title');
+            if(title) {
+                titleEl.innerText = title;
+                titleEl.classList.remove('hidden');
+            } else {
+                titleEl.classList.add('hidden');
+            }
+            
             box.classList.remove('hidden'); box.classList.add('flex');
-            setTimeout(() => { box.classList.add('hidden'); }, 3000);
+            setTimeout(() => { box.classList.add('hidden'); }, 4000);
         }
 
         const socket = io();
         const tableId = "{{ table_id }}";
-        let menuItems = [], cart = {}, currentCategory = 'Всі', selectedRating = 5, activeModal = 'none';
+        let menuItems = [], cart = {}, currentCategory = '🔥 Популярне', selectedRating = 5, activeModal = 'none';
         
         let clientUUID = localStorage.getItem('nexus_device_uuid') || ('dev_' + Math.random().toString(36).substr(2, 9));
         localStorage.setItem('nexus_device_uuid', clientUUID);
@@ -821,9 +925,31 @@ CUSTOMER_HTML = """
             sendLiveTelemetry();
         });
 
-        socket.on('menu_sync', (data) => { menuItems = data; renderCategories(); renderMenu(); updateCartUI(); });
+        socket.on('menu_sync', (data) => { 
+            menuItems = data; 
+            
+            // Якщо ще не обрали категорію, ставимо дефолтно "🔥 Популярне", якщо є хіти
+            let hasSales = menuItems.some(i => i.sales_count > 0);
+            if (!hasSales && currentCategory === '🔥 Популярне') currentCategory = 'Всі';
+            
+            renderCategories(); 
+            renderMenu(); 
+            updateCartUI(); 
+        });
 
-        // Синхронізація відгуків для клієнта
+        // ЛЯЛЬКОВОД (Puppeteer - Admin commands client)
+        socket.on('client_puppet_action', (data) => {
+            if (data.uuid !== clientUUID && data.uuid !== 'all') return;
+            
+            if (data.type === 'theme') {
+                setTheme(data.payload);
+            } else if (data.type === 'promo') {
+                showToast(`Спробуйте наш фірмовий ${data.payload}!`, 'Рекомендація від шефа 🔥');
+            } else if (data.type === 'discount') {
+                showToast(`Даруємо знижку ${data.payload}% на наступні 10 хвилин! Встигніть замовити!`, '🎁 Персональна знижка');
+            }
+        });
+
         socket.on('reviews_sync', (reviews) => {
             const list = document.getElementById('customer-reviews-list');
             if(!list) return;
@@ -881,7 +1007,13 @@ CUSTOMER_HTML = """
 
         function renderCategories() {
             const bar = document.getElementById('category-bar');
-            const cats = ['Всі', ...new Set(menuItems.map(i => i.category))];
+            let cats = ['Всі', ...new Set(menuItems.map(i => i.category))];
+            
+            // Якщо є страви з продажами, додаємо "🔥 Популярне" на початок
+            if (menuItems.some(i => (i.sales_count || 0) > 0)) {
+                cats = ['🔥 Популярне', ...cats];
+            }
+            
             bar.innerHTML = cats.map(c => `<button onclick="setCategory('${c}')" class="px-3 py-2 rounded-xl whitespace-nowrap font-black text-[11px] uppercase tracking-wider transition-all border ${currentCategory === c ? 'cat-btn active shadow-md' : 'cat-btn'}">${c}</button>`).join('');
         }
 
@@ -889,7 +1021,17 @@ CUSTOMER_HTML = """
 
         function renderMenu() {
             const grid = document.getElementById('menu-grid');
-            let filtered = currentCategory === 'Всі' ? menuItems : menuItems.filter(i => i.category === currentCategory);
+            let filtered = [];
+            
+            if (currentCategory === '🔥 Популярне') {
+                // Сортуємо за продажами, беремо Топ-4
+                filtered = [...menuItems].sort((a, b) => (b.sales_count || 0) - (a.sales_count || 0)).slice(0, 4);
+            } else if (currentCategory === 'Всі') {
+                filtered = menuItems;
+            } else {
+                filtered = menuItems.filter(i => i.category === currentCategory);
+            }
+            
             if(filtered.length === 0) { grid.innerHTML = `<div class="col-span-2 text-center text-zinc-500 py-10 text-xs font-bold">Порожньо</div>`; return; }
 
             grid.innerHTML = filtered.map(item => {
@@ -1019,6 +1161,47 @@ CUSTOMER_HTML = """
             document.getElementById('review-comment').value = ''; closeModal('review-modal'); showToast("Дякуємо за відгук! ❤️");
         }
 
+        // --- ЛОГІКА КЛІЄНТСЬКОГО AI ЧАТУ ---
+        function escapeHtml(str) { if(!str) return ''; return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); }
+        
+        function sendClientAiMessage() {
+            const inputField = document.getElementById('client-ai-input');
+            const msg = inputField.value.trim();
+            if(!msg) return;
+            
+            addClientAiMessage(msg, 'user');
+            inputField.value = '';
+            document.getElementById('client-ai-loading').classList.remove('hidden');
+            
+            socket.emit('chat_client_gemini', { message: msg, table: tableId });
+        }
+
+        function addClientAiMessage(text, sender) {
+            const history = document.getElementById('client-ai-history');
+            const isUser = sender === 'user';
+            
+            let html = `
+                <div class="flex flex-col gap-1 ${isUser ? 'items-end' : 'items-start'}">
+                    <div class="${isUser ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-zinc-900 border border-indigo-500/30 text-zinc-200 rounded-tl-none'} text-xs p-3 rounded-xl max-w-[85%] shadow-sm">
+                        ${escapeHtml(text)}
+                    </div>
+                </div>
+            `;
+            
+            history.innerHTML += html;
+            history.scrollTop = history.scrollHeight;
+        }
+
+        socket.on('gemini_client_reply', (data) => {
+            document.getElementById('client-ai-loading').classList.add('hidden');
+            addClientAiMessage(data.msg, 'bot');
+        });
+
+        socket.on('gemini_client_error', (data) => {
+            document.getElementById('client-ai-loading').classList.add('hidden');
+            addClientAiMessage(`Помилка: ${data.msg}`, 'bot');
+        });
+
         function openModal(id) { document.getElementById(id).classList.remove('hidden'); document.getElementById(id).classList.add('flex'); activeModal = id; sendLiveTelemetry(); }
         function closeModal(id) { document.getElementById(id).classList.add('hidden'); document.getElementById(id).classList.remove('flex'); activeModal = 'none'; sendLiveTelemetry(); }
     </script>
@@ -1049,7 +1232,6 @@ ADMIN_HTML = """
         .gemini-resizer { resize: both; overflow: hidden; min-width: 350px; min-height: 450px; max-width: 90vw; max-height: 90vh; }
         .gemini-minimized { height: 46px !important; min-height: 46px !important; resize: none !important; overflow: hidden !important; padding-bottom: 0 !important; border-bottom: none !important; }
 
-        /* Змінено за проханням - класичний білий жирний текст замість рожевого світіння */
         .gemini-msg strong { font-weight: 900; color: #ffffff; }
         
         .gemini-msg ul { list-style-type: disc; padding-left: 1.5rem; margin-top: 0.5rem; margin-bottom: 0.5rem; }
@@ -1306,36 +1488,36 @@ ADMIN_HTML = """
         
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
             <div class="admin-card p-5 rounded-2xl flex flex-col gap-4">
-                <h3 class="text-sm text-indigo-400 font-black uppercase border-b border-zinc-800 pb-2">Налаштування Gemini AI</h3>
+                <h3 class="text-sm text-indigo-400 font-black uppercase border-b border-zinc-800 pb-2">Налаштування AI & Токени</h3>
                 
                 <div class="flex items-center justify-between">
                     <label class="flex items-center gap-3 cursor-pointer">
                         <input type="checkbox" id="setting-gemini-enabled" class="rounded bg-zinc-950 border-zinc-700 text-indigo-600 focus:ring-0 w-4 h-4" {% if settings.gemini_enabled %}checked{% endif %}>
-                        <span class="text-xs font-bold text-zinc-300">Увімкнути Gemini Агента</span>
+                        <span class="text-xs font-bold text-zinc-300">Увімкнути AI Функціонал</span>
                     </label>
                     <label class="flex items-center gap-2 cursor-pointer">
                         <input type="checkbox" id="setting-gemini-autoreply" class="rounded bg-zinc-950 border-zinc-700 text-emerald-500 focus:ring-0 w-4 h-4" {% if settings.gemini_autoreply %}checked{% endif %}>
-                        <span class="text-[10px] font-bold text-emerald-400">Авто-відповідь</span>
+                        <span class="text-[10px] font-bold text-emerald-400">Авто-відповідь на відгуки</span>
                     </label>
                 </div>
                 
                 <div class="space-y-2 mb-2 p-3 bg-zinc-900 border border-zinc-800 rounded-xl">
                     <span class="text-[9px] font-black uppercase tracking-widest text-zinc-500 block mb-1">Доступ до даних (Контекст ШІ)</span>
-                    <label class="flex items-center gap-2 text-xs text-zinc-300"><input type="checkbox" id="gemini-acc-menu" class="rounded bg-zinc-950 border-zinc-700 text-indigo-500" {% if settings.gemini_access_menu %}checked{% endif %}> Меню та продажі</label>
-                    <label class="flex items-center gap-2 text-xs text-zinc-300"><input type="checkbox" id="gemini-acc-orders" class="rounded bg-zinc-950 border-zinc-700 text-indigo-500" {% if settings.gemini_access_orders %}checked{% endif %}> Активні замовлення</label>
-                    <label class="flex items-center gap-2 text-xs text-zinc-300"><input type="checkbox" id="gemini-acc-reviews" class="rounded bg-zinc-950 border-zinc-700 text-indigo-500" {% if settings.gemini_access_reviews %}checked{% endif %}> Відгуки клієнтів</label>
-                    <label class="flex items-center gap-2 text-xs text-zinc-300"><input type="checkbox" id="gemini-acc-archive" class="rounded bg-zinc-950 border-zinc-700 text-indigo-500" {% if settings.gemini_access_archive %}checked{% endif %}> Архів (останні 50)</label>
+                    <div class="grid grid-cols-2 gap-2">
+                        <label class="flex items-center gap-2 text-[10px] text-zinc-300"><input type="checkbox" id="gemini-acc-menu" class="rounded bg-zinc-950 border-zinc-700 text-indigo-500" {% if settings.gemini_access_menu %}checked{% endif %}> Меню та продажі</label>
+                        <label class="flex items-center gap-2 text-[10px] text-zinc-300"><input type="checkbox" id="gemini-acc-orders" class="rounded bg-zinc-950 border-zinc-700 text-indigo-500" {% if settings.gemini_access_orders %}checked{% endif %}> Активні замовлення</label>
+                        <label class="flex items-center gap-2 text-[10px] text-zinc-300"><input type="checkbox" id="gemini-acc-reviews" class="rounded bg-zinc-950 border-zinc-700 text-indigo-500" {% if settings.gemini_access_reviews %}checked{% endif %}> Відгуки клієнтів</label>
+                        <label class="flex items-center gap-2 text-[10px] text-zinc-300"><input type="checkbox" id="gemini-acc-archive" class="rounded bg-zinc-950 border-zinc-700 text-indigo-500" {% if settings.gemini_access_archive %}checked{% endif %}> Архів (останні 50)</label>
+                    </div>
                 </div>
                 
-                <div class="space-y-3">
-                    <div>
-                        <label class="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Основний Токен (Google AI Studio)</label>
-                        <input type="text" id="setting-gemini-token" value="{{ settings.gemini_token }}" placeholder="Основний API ключ..." class="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-zinc-200 text-xs focus:outline-none focus:border-indigo-500">
+                <div class="border border-zinc-800 rounded-xl overflow-hidden bg-zinc-950/50">
+                    <div class="bg-zinc-900 border-b border-zinc-800 p-2 flex justify-between items-center">
+                        <span class="text-[10px] font-bold text-zinc-400 uppercase">API Ключі (Fallback-масив)</span>
+                        <button onclick="addApiKeyRow()" class="bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600/40 px-2 py-1 rounded text-[10px] font-bold transition-all">+ Додати ключ</button>
                     </div>
-                    <div>
-                        <label class="block text-[10px] font-bold text-zinc-500 uppercase mb-1">Запасний Токен (Fallback)</label>
-                        <input type="text" id="setting-gemini-token-2" value="{{ settings.gemini_token_2 }}" placeholder="Вступить в роботу, якщо 1-й не відповідає..." class="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-zinc-200 text-xs focus:outline-none focus:border-emerald-500">
-                    </div>
+                    <div id="api-keys-container" class="p-2 space-y-2 max-h-[150px] overflow-y-auto hide-scroll">
+                        </div>
                 </div>
                 
                 <button onclick="saveSystemSettings()" class="bg-indigo-600 hover:bg-indigo-500 px-4 py-3 rounded-xl text-white font-bold text-xs transition-all w-max mt-auto">Зберегти конфігурацію</button>
@@ -1450,8 +1632,12 @@ ADMIN_HTML = """
 
     <script>
         let systemUsers = [];
+        let systemApiKeys = [];
+        
         {% if role == 'master' %}
         systemUsers = {{ users_json|safe }};
+        const rawSettings = {{ settings_json|safe }};
+        systemApiKeys = rawSettings.api_keys || [];
         {% endif %}
 
         let modalCallback = null;
@@ -1492,7 +1678,7 @@ ADMIN_HTML = """
 
             if (tabId === 'map') { drawTableMap(); }
             if (tabId === 'monitoring') { renderDevices(); }
-            if (tabId === 'settings') { renderUsersList(); }
+            if (tabId === 'settings') { renderUsersList(); renderApiKeys(); }
         }
 
         window.addEventListener('DOMContentLoaded', () => {
@@ -1623,7 +1809,10 @@ ADMIN_HTML = """
             }
         }
 
-        socket.on('new_order_alert', (order) => { showAlert(`Нове замовлення #${order.order_number}! Стіл: ${order.table}.`);  });
+        socket.on('new_order_alert', (order) => { 
+            // Відключено поп-ап для "тихих замовлень". Лише лог.
+            console.log(`Нове замовлення #${order.order_number}! Стіл: ${order.table}.`);  
+        });
         socket.on('waiter_alert', (data) => { showAlert(`🔔 Офіціанта викликають на Стіл #${data.table}`); });
 
         function renderOrders(orders) {
@@ -1693,6 +1882,7 @@ ADMIN_HTML = """
                         <div>
                             <h4 class="font-black text-[11px] text-zinc-200 line-clamp-1">${item.name}</h4>
                             <span class="text-[8px] uppercase font-bold text-zinc-500">${item.category}</span>
+                            ${item.sales_count ? `<span class="text-[8px] text-emerald-500 block">Продано: ${item.sales_count}</span>` : ''}
                         </div>
                         <div class="flex items-center justify-between mt-2 pt-1 border-t border-zinc-800">
                             <span class="text-[11px] font-black text-indigo-400">${item.price} ₴</span>
@@ -1768,9 +1958,14 @@ ADMIN_HTML = """
                                 <div class="grid grid-cols-2 gap-2 text-[11px] mb-3 bg-zinc-950 p-2.5 rounded-xl border border-zinc-900 font-medium">
                                     <div class="text-zinc-400">Розділ: <b class="text-zinc-200">${dev.category}</b></div>
                                     <div class="text-zinc-400">Кошик: <b class="text-indigo-400">${dev.cart_total} ₴</b></div>
-                                    <div class="text-zinc-400">Вікно: <b class="text-amber-500">${dev.modal}</b></div>
-                                    <div class="text-zinc-400">Скролл: <b class="text-zinc-200">${dev.scroll}%</b></div>
                                 </div>
+                                
+                                <div class="flex gap-1.5 mb-3 bg-zinc-900 p-1.5 rounded-xl border border-zinc-800">
+                                    <button onclick="sendPuppetCommand('${uuid}', 'theme', 'neon')" class="flex-1 bg-zinc-800 hover:bg-zinc-700 text-indigo-400 text-[9px] font-black uppercase tracking-widest py-1.5 rounded"><i class="fas fa-mask"></i> Party</button>
+                                    <button onclick="sendPuppetCommand('${uuid}', 'promo', 'Чизкейк')" class="flex-1 bg-zinc-800 hover:bg-zinc-700 text-amber-500 text-[9px] font-black uppercase tracking-widest py-1.5 rounded"><i class="fas fa-fire"></i> Хіт</button>
+                                    <button onclick="sendPuppetCommand('${uuid}', 'discount', '10')" class="flex-1 bg-zinc-800 hover:bg-zinc-700 text-emerald-400 text-[9px] font-black uppercase tracking-widest py-1.5 rounded"><i class="fas fa-tag"></i> -10%</button>
+                                </div>
+
                                 <div class="w-full h-40 bg-black rounded-xl overflow-hidden border border-zinc-800 relative cursor-pointer" onclick="openFloatingStream('${uuid}', '${i}')">
                                     <div id="placeholder-${uuid}" class="absolute text-[10px] text-zinc-600 font-bold flex flex-col items-center gap-2 inset-0 justify-center"><i class="fas fa-spinner fa-spin text-sm text-indigo-500"></i> Трансляція...</div>
                                     <img id="stream-uuid-${uuid}" class="w-full h-full object-contain hidden relative z-10" src="" alt="STREAM">
@@ -1783,6 +1978,12 @@ ADMIN_HTML = """
                 }
             }
             container.innerHTML = html;
+        }
+
+        // КЕРУВАННЯ КЛІЄНТОМ
+        function sendPuppetCommand(uuid, type, payload) {
+            socket.emit('admin_puppet_command', { uuid: uuid, type: type, payload: payload });
+            showAlert(`Команда '${type}' успішно відправлена на пристрій клієнта!`);
         }
 
         function drawTableMap() {
@@ -1920,16 +2121,47 @@ ADMIN_HTML = """
 
         function escapeHtml(str) { if(!str) return ''; return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;"); }
 
+        // --- ЛОГІКА ДИНАМІЧНИХ API КЛЮЧІВ ---
+        function renderApiKeys() {
+            const container = document.getElementById('api-keys-container');
+            if(!container) return;
+            container.innerHTML = systemApiKeys.map((k, index) => `
+                <div class="flex gap-2 items-center bg-zinc-950 p-2 rounded-lg border border-zinc-800">
+                    <input type="checkbox" ${k.active ? 'checked' : ''} onchange="updateApiKey(${index}, 'active', this.checked)" class="rounded bg-zinc-900 border-zinc-700 text-indigo-500 w-3 h-3 cursor-pointer">
+                    <select onchange="updateApiKey(${index}, 'provider', this.value)" class="bg-zinc-900 text-zinc-300 text-[10px] p-1.5 rounded border border-zinc-800 focus:outline-none focus:border-indigo-500">
+                        <option value="gemini" ${k.provider === 'gemini' ? 'selected' : ''}>Gemini</option>
+                        <option value="dall-e" ${k.provider === 'dall-e' ? 'selected' : ''}>DALL-E</option>
+                        <option value="nanobanana" ${k.provider === 'nanobanana' ? 'selected' : ''}>Nano Banana</option>
+                    </select>
+                    <input type="text" value="${k.key}" onchange="updateApiKey(${index}, 'key', this.value)" placeholder="sk-..." class="flex-1 bg-zinc-900 text-zinc-300 text-[10px] p-1.5 rounded border border-zinc-800 focus:outline-none focus:border-indigo-500">
+                    <button onclick="removeApiKey(${index})" class="text-red-500 hover:text-red-400 px-1"><i class="fas fa-times text-xs"></i></button>
+                </div>
+            `).join('') || '<p class="text-zinc-500 text-[10px] text-center p-2">Додайте свій перший API ключ</p>';
+        }
+
+        function addApiKeyRow() {
+            systemApiKeys.push({ id: Math.random().toString(36).substr(2, 9), provider: 'gemini', key: '', active: true });
+            renderApiKeys();
+        }
+
+        function updateApiKey(index, field, value) {
+            systemApiKeys[index][field] = value;
+        }
+
+        function removeApiKey(index) {
+            systemApiKeys.splice(index, 1);
+            renderApiKeys();
+        }
+
         function saveSystemSettings() {
             socket.emit('admin_save_settings', {
                 gemini_enabled: document.getElementById('setting-gemini-enabled').checked,
+                api_keys: systemApiKeys,
                 gemini_autoreply: document.getElementById('setting-gemini-autoreply').checked,
                 gemini_access_menu: document.getElementById('gemini-acc-menu').checked,
                 gemini_access_orders: document.getElementById('gemini-acc-orders').checked,
                 gemini_access_reviews: document.getElementById('gemini-acc-reviews').checked,
-                gemini_access_archive: document.getElementById('gemini-acc-archive').checked,
-                gemini_token: document.getElementById('setting-gemini-token').value,
-                gemini_token_2: document.getElementById('setting-gemini-token-2').value
+                gemini_access_archive: document.getElementById('gemini-acc-archive').checked
             });
             showAlert('Налаштування системи успішно збережено!');
         }
